@@ -7,8 +7,8 @@ pub struct TorrentApi {
 }
 
 impl TorrentApi {
-  pub fn new(host: &str, username: &str, password: &str) -> Self {
-    let client = Arc::new(QbitClient::new_with_user_pwd(host, username, password).unwrap());
+  pub fn new() -> Self {
+    let client = Arc::new(QbitClient::new_from_env().unwrap());
     TorrentApi { client }
   }
 

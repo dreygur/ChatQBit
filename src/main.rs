@@ -35,16 +35,15 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
-  pretty_env_logger::init();
-  log::info!("Starting throw dice bot...");
-
-  let bot = Bot::new("6114059137:AAF1JKPW7bNItJ1vMrm0DsDmymyqo2VGNvQ");
+  let bot = Bot::from_env();
 
   // initialize client with given username and password
-  let client = torrent::TorrentApi::new("http://localhost:9080", "admin", "");
+  let client = torrent::TorrentApi::new();
 
   // login first
   let _ = client.login().await;
+
+  println!("The bot is now started...");
 
   Dispatcher::builder(bot, schema())
     .dependencies(dptree::deps![InMemStorage::<State>::new(), client])
