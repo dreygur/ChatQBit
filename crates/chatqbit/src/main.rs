@@ -1,11 +1,25 @@
+use dotenv::dotenv;
 use telegram::{telegram, State};
-use teloxide::dispatching::dialogue::InMemStorage;
-use teloxide::prelude::*;
+use teloxide::{
+    prelude::*,
+    dispatching::dialogue::InMemStorage,
+};
+use tracing::info;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() {
     // Load environment variables from .env file
-    let _ = dotenv::dotenv();
+    dotenv().ok();
+
+    // Initialize tracing
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,chatqbit=debug,reqwest=trace,tower_http=trace".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     // Initialize the bot from environment variables
     let bot = Bot::from_env();
@@ -20,8 +34,8 @@ async fn main() {
         return;
     }
 
-    println!("Bot started successfully!");
-    println!("qBittorrent client authenticated");
+    info!("Bot started successfully!");
+    info!("qBittorrent client authenticated");
 
     Dispatcher::builder(bot, telegram::schema())
         .dependencies(dptree::deps![InMemStorage::<State>::new(), client])

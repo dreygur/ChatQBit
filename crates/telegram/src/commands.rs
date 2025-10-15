@@ -33,7 +33,7 @@ pub async fn magnet(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResul
     match msg.text() {
         Some(text) => {
             let urls = [text.to_string()];
-            match torrent.client.torrents_add_by_url(&urls).await {
+            match torrent.magnet(&urls).await {
                 Ok(_) => {
                     bot.send_message(
                         msg.chat.id,
@@ -64,5 +64,45 @@ pub async fn invalid_state(bot: Bot, msg: Message) -> HandlerResult {
         "Unable to handle the message. Type /help to see the usage.",
     )
     .await?;
+    Ok(())
+}
+
+pub async fn query(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult {
+    let resp = torrent.query().await;
+    match resp {
+        Ok(torrents) => {
+            let mut response = String::from("Current Torrents:\n");
+            for t in torrents.into_iter() {
+                response.push_str(&format!(
+                    "- Name: {}\n  Status: {:?}\n  Progress: {:.2}%\n",
+                    t.name,
+                    t.state,
+                    t.progress * 100.0
+                ));
+            }
+            bot.send_message(msg.chat.id, response).await?;
+        }
+        Err(err) => {
+            tracing::error!("Error fetching torrents: {}", err);
+            bot.send_message(msg.chat.id, format!("Error fetching torrents: {}", err))
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+
+pub async fn test(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult {
+    let resp = torrent.test().await;
+    match resp {
+        Ok(prefs) => {
+            bot.send_message(msg.chat.id, format!("App Preferences: {:?}", prefs)).await?;
+        }
+        Err(err) => {
+            tracing::error!("Error fetching app preferences: {}", err);
+            bot.send_message(msg.chat.id, format!("Error fetching app preferences: {}", err))
+                .await?;
+        }
+    }
     Ok(())
 }

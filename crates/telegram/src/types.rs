@@ -32,4 +32,8 @@ pub enum Command {
     Magnet,
     #[command(description = "Cancel the current operation")]
     Cancel,
+    #[command(description = "Query")]
+    Query,
+    #[command(description = "Test the bot")]
+    Test,
 }

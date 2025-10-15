@@ -1,0 +1,15 @@
+# This is a Bacon configuration file for the ChatQBit project.
+# It defines a default job to run the ChatQBit application using Cargo.
+# The output is configured to always show colored terminal output.
+# To execute the default job, run `bacon` in the terminal.
+# Make sure you have Bacon installed and properly set up in your Rust environment.
+
+default_job = "run"
+
+[jobs.run]
+command = ["cargo", "run", "--bin", "chatqbit"]
+need_stdout = true
+
+[output]
+color = "always"
+pager = "always"

@@ -15,7 +15,9 @@ pub fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'stat
             case![State::Start]
                 .branch(case![Command::Help].endpoint(commands::help))
                 // .branch(case![Command::Start].endpoint(start))
-                .branch(case![Command::Magnet].endpoint(commands::get_magnet)),
+                .branch(case![Command::Magnet].endpoint(commands::get_magnet))
+                .branch(case![Command::Query].endpoint(commands::query))
+                .branch(case![Command::Test].endpoint(commands::test))
         )
         .branch(case![Command::Cancel].endpoint(commands::cancel));
 
