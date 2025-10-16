@@ -1,9 +1,32 @@
+//! qBittorrent API wrapper implementation
+
 use qbit_rs::{model::{AddTorrentArg, Credential, Sep, Torrent}, Error, Qbit};
 use std::{sync::Arc};
 
-/// Wrapper around qBittorrent API client
+/// Thread-safe wrapper around the qBittorrent API client
+///
+/// This struct provides a high-level interface to qBittorrent operations,
+/// handling authentication and providing logging for all operations.
+///
+/// # Examples
+///
+/// ```no_run
+/// use torrent::TorrentApi;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let api = TorrentApi::new();
+///     api.login().await?;
+///
+///     let torrents = api.query().await?;
+///     println!("Found {} torrents", torrents.len());
+///
+///     Ok(())
+/// }
+/// ```
 #[derive(Clone)]
 pub struct TorrentApi {
+    /// The underlying qBittorrent client, wrapped in Arc for thread-safety
     pub client: Arc<Qbit>,
 }
 
@@ -22,7 +45,7 @@ impl TorrentApi {
         let endpoint = std::env::var("QBIT_HOST")
             .expect("QBIT_HOST must be set in .env file, e.g., http://localhost:8080");
         let username = std::env::var("QBIT_USERNAME").expect("QBIT_USERNAME must be set in .env file");
-        let password = std::env::var("QBIT_PASSWORD").expect("QBIT_PASSWORD must be set in .env file");\
+        let password = std::env::var("QBIT_PASSWORD").expect("QBIT_PASSWORD must be set in .env file");
         let credential = Credential::new(username, password);
         let client = Arc::new(Qbit::new(endpoint.as_str(), credential));
         TorrentApi { client }
@@ -63,10 +86,13 @@ impl TorrentApi {
 
     pub async fn magnet(&self, urls: &[String]) -> Result<(), Error> {
         tracing::info!("Adding torrent with URLs: {:?}", urls);
+        let url_objects: Vec<_> = urls.iter()
+            .filter_map(|s| s.parse().ok())
+            .collect();
         let arg = AddTorrentArg {
-            source: qbit_rs::model::TorrentSource::Urls { urls: Sep::from(urls, "\n") },
+            source: qbit_rs::model::TorrentSource::Urls { urls: Sep::from(url_objects) },
             ..Default::default()
-        }
+        };
         match self.client.add_torrent(arg).await {
             Ok(_) => Ok(()),
             Err(err) => {
@@ -74,13 +100,93 @@ impl TorrentApi {
                 Err(err)
             }
         }
-        // match self.client.torrents_add_by_url(urls).await {
-        //     Ok(_) => Ok(()),
-        //     Err(err) => {
-        //         tracing::error!("Error adding torrent: {}", err);
-        //         Err(err)
-        //     }
-        // }
+    }
+
+    pub async fn get_torrent_info(&self, hash: &str) -> Result<qbit_rs::model::TorrentProperty, Error> {
+        tracing::info!("Getting torrent properties for hash: {}", hash);
+        self.client.get_torrent_properties(hash).await
+    }
+
+    pub async fn start_torrents(&self, hash: &str) -> Result<(), Error> {
+        tracing::info!("Starting torrents: {}", hash);
+        let hashes = vec![hash.to_string()];
+        self.client.start_torrents(hashes).await
+    }
+
+    pub async fn stop_torrents(&self, hash: &str) -> Result<(), Error> {
+        tracing::info!("Stopping torrents: {}", hash);
+        let hashes = vec![hash.to_string()];
+        self.client.stop_torrents(hashes).await
+    }
+
+    pub async fn delete_torrents(&self, hash: &str, delete_files: bool) -> Result<(), Error> {
+        tracing::info!("Deleting torrents: {} (delete files: {})", hash, delete_files);
+        let hashes = vec![hash.to_string()];
+        self.client.delete_torrents(hashes, delete_files).await
+    }
+
+    pub async fn recheck_torrents(&self, hash: &str) -> Result<(), Error> {
+        tracing::info!("Rechecking torrents: {}", hash);
+        let hashes = vec![hash.to_string()];
+        self.client.recheck_torrents(hashes).await
+    }
+
+    pub async fn reannounce_torrents(&self, hash: &str) -> Result<(), Error> {
+        tracing::info!("Reannouncing torrents: {}", hash);
+        let hashes = vec![hash.to_string()];
+        self.client.reannounce_torrents(hashes).await
+    }
+
+    pub async fn set_top_priority(&self, hash: &str) -> Result<(), Error> {
+        tracing::info!("Setting top priority for: {}", hash);
+        let hashes = vec![hash.to_string()];
+        self.client.maximal_priority(hashes).await
+    }
+
+    pub async fn set_bottom_priority(&self, hash: &str) -> Result<(), Error> {
+        tracing::info!("Setting bottom priority for: {}", hash);
+        let hashes = vec![hash.to_string()];
+        self.client.minimal_priority(hashes).await
+    }
+
+    pub async fn get_transfer_info(&self) -> Result<qbit_rs::model::TransferInfo, Error> {
+        tracing::info!("Getting transfer info");
+        self.client.get_transfer_info().await
+    }
+
+    pub async fn get_version(&self) -> Result<String, Error> {
+        tracing::info!("Getting qBittorrent version");
+        self.client.get_version().await
+    }
+
+    pub async fn get_categories(&self) -> Result<std::collections::HashMap<String, qbit_rs::model::Category>, Error> {
+        tracing::info!("Getting categories");
+        self.client.get_categories().await
+    }
+
+    pub async fn get_tags(&self) -> Result<Vec<String>, Error> {
+        tracing::info!("Getting all tags");
+        self.client.get_all_tags().await
+    }
+
+    pub async fn get_download_limit(&self) -> Result<u64, Error> {
+        tracing::info!("Getting global download limit");
+        self.client.get_download_limit().await
+    }
+
+    pub async fn get_upload_limit(&self) -> Result<u64, Error> {
+        tracing::info!("Getting global upload limit");
+        self.client.get_upload_limit().await
+    }
+
+    pub async fn set_download_limit(&self, limit: u64) -> Result<(), Error> {
+        tracing::info!("Setting global download limit to: {}", limit);
+        self.client.set_download_limit(limit).await
+    }
+
+    pub async fn set_upload_limit(&self, limit: u64) -> Result<(), Error> {
+        tracing::info!("Setting global upload limit to: {}", limit);
+        self.client.set_upload_limit(limit).await
     }
 }
 
