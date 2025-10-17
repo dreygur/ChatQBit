@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/chatqbit",
+    "crates/chatqbit", "crates/fileserver",
     "crates/telegram",
     "crates/torrent"
 ]

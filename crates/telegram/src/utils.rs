@@ -18,6 +18,11 @@ pub fn format_bytes(bytes: i64) -> String {
     format!("{}{:.2} {}", sign, size, UNITS[unit_index])
 }
 
+/// Format file size (u64) in human-readable format
+pub fn format_size(bytes: u64) -> String {
+    format_bytes(bytes as i64)
+}
+
 /// Format speed (bytes/sec) in human-readable format
 pub fn format_speed(bytes_per_sec: u64) -> String {
     if bytes_per_sec == 0 {
@@ -112,7 +117,21 @@ pub fn extract_limit_arg(args: &[&str]) -> Result<u64, String> {
 
     args[1]
         .parse::<u64>()
-        .map_err(|_| "Invalid limit value. Must be a number.".to_string())
+        .map_err(|_| "Invalid limit value. Must be a number".to_string())
+}
+
+/// Escape special characters for MarkdownV2
+///
+/// Escapes: _*[]()~`>#+-=|{}.!
+pub fn escape_markdown_v2(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '_' | '*' | '[' | ']' | '(' | ')' | '~' | '`' | '>' | '#' | '+' | '-' | '=' | '|' | '{' | '}' | '.' | '!' => {
+                format!("\\{}", c)
+            }
+            _ => c.to_string(),
+        })
+        .collect()
 }
 
 /// Extract info hash from .torrent file data

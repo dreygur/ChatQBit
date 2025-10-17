@@ -68,6 +68,12 @@ pub enum Command {
     SetDlLimit,
     #[command(description = "Set upload limit (usage: /setupllimit <bytes/s> or 0 for unlimited)")]
     SetUpLimit,
+    #[command(description = "Get streaming links for torrent files (usage: /stream <hash>)")]
+    Stream,
+    #[command(description = "List all files in a torrent (usage: /files <hash>)")]
+    Files,
+    #[command(description = "Toggle sequential download mode (usage: /sequential <hash>)")]
+    Sequential,
     #[command(description = "Cancel the current operation")]
     Cancel,
 }

@@ -41,6 +41,9 @@ pub fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'stat
                 .branch(case![Command::SpeedLimits].endpoint(commands::speed_limits))
                 .branch(case![Command::SetDlLimit].endpoint(commands::set_dl_limit))
                 .branch(case![Command::SetUpLimit].endpoint(commands::set_up_limit))
+                .branch(case![Command::Stream].endpoint(commands::stream))
+                .branch(case![Command::Files].endpoint(commands::files))
+                .branch(case![Command::Sequential].endpoint(commands::sequential))
         )
         .branch(case![Command::Cancel].endpoint(commands::cancel));
 

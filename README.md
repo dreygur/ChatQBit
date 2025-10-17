@@ -10,16 +10,41 @@ ChatQBit is a feature-rich Telegram bot written in Rust that provides comprehens
 - **telegram**: Handles Telegram bot logic, commands, dialogue state management, message routing, and user interaction formatting
 - **torrent**: Provides a clean API wrapper around qbit-rs for qBittorrent operations
 
+## Features
+
+- 🎬 **File Streaming**: Stream torrent files directly via HTTP with range request support
+- 🌐 **Remote Access**: Built-in tunnel support (localhost.run, Cloudflare) for accessing from anywhere
+- 📱 **Mobile Friendly**: Works on any device - VLC, MX Player, browsers
+- 🔒 **Secure**: Token-based authentication, SHA-256 signed URLs
+- ⚡ **Fast**: Sequential download mode for instant streaming
+- 🛡️ **Failsafe**: Automatic qBittorrent query fallback if files move
+- 🤖 **Interactive**: Inline keyboards, confirmation dialogs, user-friendly menus
+- 🔄 **Duplicate Detection**: Automatic duplicate checking for magnets and .torrent files
+- 📂 **File Upload**: Add torrents via .torrent file upload
+
 ## Required Environment Variables
 
 Create a `.env` file in the project root with:
 
-```
+```env
+# Required
 TELOXIDE_TOKEN=<Your Telegram Bot Token>
 QBIT_HOST=<QBitTorrent Web UI address with PORT. Default: http://127.0.0.1:8080>
 QBIT_USERNAME=<QBitTorrent Username. Default: admin>
 QBIT_PASSWORD=<QBitTorrent Password>
+
+# Optional - File Streaming
+FILE_SERVER_HOST=0.0.0.0
+FILE_SERVER_PORT=8081
+FILE_SERVER_BASE_URL=http://localhost:8081
+FILE_SERVER_SECRET=change_me_in_production
+
+# Optional - Remote Access Tunnel
+# Options: localhost.run, cloudflare, none
+TUNNEL_PROVIDER=localhost.run
 ```
+
+See [TUNNEL.md](./TUNNEL.md) for detailed tunnel configuration guide.
 
 ## Build and Run Commands
 
@@ -182,6 +207,11 @@ All handlers follow this structure:
 - `/setdllimit <bytes/s>` - Set download limit (0 = unlimited)
 - `/setupllimit <bytes/s>` - Set upload limit (0 = unlimited)
 
+**Streaming (requires fileserver crate):**
+- `/stream <hash>` - Generate streaming links for torrent files
+- `/files <hash>` - List all files in a torrent with progress
+- `/sequential <hash>` - Toggle sequential download mode for streaming
+
 ### TorrentApi Interface
 
 **Core Methods** (crates/torrent/src/torrent.rs):
@@ -211,3 +241,28 @@ The release build (crates/chatqbit/Cargo.toml:18-23) is optimized for size and p
 - `lto = true`: Link-time optimization
 - `codegen-units = 1`: Single codegen unit for better optimization
 - `strip = true`: Strip symbols from binary
+
+## Quick Start: Streaming Torrents
+
+1. **Configure tunnel** (for remote access):
+   ```env
+   TUNNEL_PROVIDER=localhost.run
+   ```
+
+2. **Start the bot**:
+   ```bash
+   cargo run --release
+   ```
+
+3. **Add a torrent**:
+   - Send `/magnet` to the bot
+   - Paste magnet link or upload .torrent file
+   - Bot automatically enables sequential download
+
+4. **Stream the files**:
+   - Use `/list` to get the torrent hash
+   - Send `/stream <hash>` to get streaming URLs
+   - Click the link or copy to VLC/MX Player
+   - **Works from anywhere with tunnel enabled!**
+
+For detailed tunnel setup, see [TUNNEL.md](./TUNNEL.md)

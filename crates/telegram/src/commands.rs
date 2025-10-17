@@ -86,6 +86,9 @@ pub async fn magnet(
 
     let urls = [text.to_string()];
 
+    // Extract info hash from magnet link for duplicate checking and sequential mode
+    let info_hash = extract_hash_from_magnet(text);
+
     // Check for duplicates if enabled
     if crate::constants::ENABLE_DUPLICATE_CHECK {
         match torrent.check_duplicates(&urls).await {
@@ -122,6 +125,21 @@ pub async fn magnet(
     // Add the torrent
     match torrent.magnet(&urls).await {
         Ok(_) => {
+            // Enable sequential download and first/last piece priority by default
+            if let Some(hash) = info_hash {
+                tracing::info!("Enabling sequential download and first/last piece priority for torrent: {}", hash);
+
+                if let Err(err) = torrent.toggle_sequential_download(&hash).await {
+                    tracing::warn!("Failed to enable sequential download: {}", err);
+                }
+
+                if let Err(err) = torrent.toggle_first_last_piece_priority(&hash).await {
+                    tracing::warn!("Failed to enable first/last piece priority: {}", err);
+                }
+            } else {
+                tracing::warn!("Could not extract info hash from magnet link, skipping sequential mode setup");
+            }
+
             handlers::send_response(
                 bot,
                 msg.chat.id,
@@ -218,13 +236,15 @@ async fn handle_torrent_file(
         return Ok(());
     }
 
+    // Extract info hash from torrent file for duplicate checking and sequential mode
+    let info_hash = utils::extract_torrent_info_hash(&file_data);
+
     // Check for duplicates if enabled
     if crate::constants::ENABLE_DUPLICATE_CHECK {
-        // Extract info hash from torrent file for duplicate checking
-        if let Some(info_hash) = utils::extract_torrent_info_hash(&file_data) {
-            tracing::debug!("Extracted info hash from torrent file: {}", info_hash);
+        if let Some(ref hash) = info_hash {
+            tracing::debug!("Extracted info hash from torrent file: {}", hash);
 
-            let dummy_magnet = format!("magnet:?xt=urn:btih:{}", info_hash);
+            let dummy_magnet = format!("magnet:?xt=urn:btih:{}", hash);
             let urls = [dummy_magnet];
 
             match torrent.check_duplicates(&urls).await {
@@ -262,6 +282,21 @@ async fn handle_torrent_file(
     // Add the torrent file
     match torrent.add_torrent_file(filename, file_data).await {
         Ok(_) => {
+            // Enable sequential download and first/last piece priority by default
+            if let Some(hash) = info_hash {
+                tracing::info!("Enabling sequential download and first/last piece priority for torrent: {}", hash);
+
+                if let Err(err) = torrent.toggle_sequential_download(&hash).await {
+                    tracing::warn!("Failed to enable sequential download: {}", err);
+                }
+
+                if let Err(err) = torrent.toggle_first_last_piece_priority(&hash).await {
+                    tracing::warn!("Failed to enable first/last piece priority: {}", err);
+                }
+            } else {
+                tracing::warn!("Could not extract info hash from torrent file, skipping sequential mode setup");
+            }
+
             handlers::send_response(
                 bot,
                 msg.chat.id,
@@ -638,6 +673,213 @@ pub async fn menu(bot: Bot, msg: Message) -> HandlerResult {
     Ok(())
 }
 
+/// Generate streaming links for torrent files
+pub async fn stream(
+    bot: Bot,
+    msg: Message,
+    torrent: TorrentApi,
+    file_server: fileserver::FileServerApi,
+) -> HandlerResult {
+    let args = utils::parse_args(msg.text().unwrap_or(""));
+
+    let hash = match utils::extract_hash_arg(&args) {
+        Ok(h) => h,
+        Err(e) => {
+            bot.send_message(
+                msg.chat.id,
+                format!("{} {}\n\nUsage: /stream <torrent_hash>\n\nTip: Use /list to get full torrent hashes.", emoji::ERROR, e),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    // Get torrent files
+    let files = match torrent.get_torrent_files(hash).await {
+        Ok(f) => f,
+        Err(err) => {
+            tracing::error!("Error getting torrent files: {}", err);
+            bot.send_message(msg.chat.id, format!("{} Error: {}", emoji::ERROR, err))
+                .await?;
+            return Ok(());
+        }
+    };
+
+    if files.is_empty() {
+        bot.send_message(msg.chat.id, "No files found in this torrent.")
+            .await?;
+        return Ok(());
+    }
+
+    // Get torrent info for save path
+    let torrent_info = match torrent.get_torrent_info(hash).await {
+        Ok(info) => info,
+        Err(err) => {
+            tracing::error!("Error getting torrent info: {}", err);
+            bot.send_message(msg.chat.id, format!("{} Error: {}", emoji::ERROR, err))
+                .await?;
+            return Ok(());
+        }
+    };
+
+    let save_path = torrent_info.save_path;
+    let mut response = String::from("*🎬 Streaming Links for Torrent*\n\n");
+
+    // Generate streaming links for each file
+    for (index, file) in files.iter().enumerate() {
+        let filename = &file.name;
+
+        // Skip small files (likely metadata/samples)
+        let file_size = file.size;
+        if file_size < 1_000_000 {  // Skip files smaller than 1MB
+            continue;
+        }
+
+        // Generate streaming token
+        let token = fileserver::generate_stream_token(hash, index, file_server.state().secret());
+
+        // Construct full file path
+        // Note: save_path is already absolute (e.g., /home/user/Downloads/)
+        // filename includes relative path within torrent (e.g., "Folder/video.mkv")
+        let save_path_str = save_path.as_ref().map(|s| s.as_str()).unwrap_or(".");
+        let file_path = std::path::PathBuf::from(save_path_str).join(filename);
+
+        tracing::debug!("Registering stream - save_path: {:?}, filename: {}, full_path: {}",
+                        save_path, filename, file_path.display());
+
+        // Register stream in server state
+        let stream_info = fileserver::StreamInfo {
+            torrent_hash: hash.to_string(),
+            file_index: index,
+            file_path,
+            filename: filename.clone(),
+            created_at: chrono::Utc::now(),
+        };
+        file_server.state().register_stream(token.clone(), stream_info);
+
+        // Generate URL
+        let stream_url = format!("{}/stream/{}/{}", file_server.base_url(), token, urlencoding::encode(&filename));
+
+        // Escape filename and size for MarkdownV2
+        let escaped_filename = utils::escape_markdown_v2(filename);
+        let escaped_size = utils::escape_markdown_v2(&utils::format_size(file_size as u64));
+
+        response.push_str(&format!(
+            "📄 *{}*\n   Size: {}\n   🔗 [Click to Stream]({})\n   📋 `{}`\n\n",
+            escaped_filename,
+            escaped_size,
+            stream_url,
+            stream_url
+        ));
+    }
+
+    response.push_str("💡 *Tip:* Click the link to open in your browser, or tap the monospace URL to copy and paste into VLC/MX Player\\!");
+
+    bot.send_message(msg.chat.id, response)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .disable_web_page_preview(true)
+        .await?;
+    Ok(())
+}
+
+/// List all files in a torrent
+pub async fn files(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult {
+    let args = utils::parse_args(msg.text().unwrap_or(""));
+
+    let hash = match utils::extract_hash_arg(&args) {
+        Ok(h) => h,
+        Err(e) => {
+            bot.send_message(
+                msg.chat.id,
+                format!("{} {}\n\nUsage: /files <torrent_hash>\n\nTip: Use /list to get full torrent hashes.", emoji::ERROR, e),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    // Get torrent files
+    let files = match torrent.get_torrent_files(hash).await {
+        Ok(f) => f,
+        Err(err) => {
+            tracing::error!("Error getting torrent files: {}", err);
+            bot.send_message(msg.chat.id, format!("{} Error: {}", emoji::ERROR, err))
+                .await?;
+            return Ok(());
+        }
+    };
+
+    if files.is_empty() {
+        bot.send_message(msg.chat.id, "No files found in this torrent.")
+            .await?;
+        return Ok(());
+    }
+
+    let mut response = format!("{} Files in Torrent:\n\n", emoji::FOLDER);
+
+    for (index, file) in files.iter().enumerate() {
+        let filename = &file.name;
+        let size = file.size;
+        let progress = file.progress * 100.0;
+
+        response.push_str(&format!(
+            "{}. {}\n   Size: {} | Progress: {:.1}%\n\n",
+            index + 1,
+            filename,
+            utils::format_size(size as u64),
+            progress
+        ));
+    }
+
+    bot.send_message(msg.chat.id, response).await?;
+    Ok(())
+}
+
+/// Toggle sequential download mode for a torrent
+pub async fn sequential(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult {
+    let args = utils::parse_args(msg.text().unwrap_or(""));
+
+    let hash = match utils::extract_hash_arg(&args) {
+        Ok(h) => h,
+        Err(e) => {
+            bot.send_message(
+                msg.chat.id,
+                format!("{} {}\n\nUsage: /sequential <torrent_hash>\n\nTip: Use /list to get full torrent hashes.", emoji::ERROR, e),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    // Toggle sequential download
+    match torrent.toggle_sequential_download(hash).await {
+        Ok(_) => {
+            // Also toggle first/last piece priority for better streaming
+            if let Err(err) = torrent.toggle_first_last_piece_priority(hash).await {
+                tracing::warn!("Failed to toggle first/last piece priority: {}", err);
+            }
+
+            bot.send_message(
+                msg.chat.id,
+                format!(
+                    "{} Sequential download mode toggled!\n\n\
+                    ℹ️ Sequential mode downloads pieces in order, which is better for streaming.\n\
+                    First and last pieces will be prioritized to load file headers quickly.",
+                    emoji::SUCCESS
+                ),
+            )
+            .await?;
+        }
+        Err(err) => {
+            tracing::error!("Error toggling sequential mode: {}", err);
+            bot.send_message(msg.chat.id, format!("{} Error: {}", emoji::ERROR, err))
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Handle invalid state
 pub async fn invalid_state(bot: Bot, msg: Message) -> HandlerResult {
     bot.send_message(
@@ -646,4 +888,35 @@ pub async fn invalid_state(bot: Bot, msg: Message) -> HandlerResult {
     )
     .await?;
     Ok(())
+}
+
+/// Extract info hash from magnet link
+///
+/// Parses magnet links and extracts the info hash (btih parameter).
+/// Returns lowercase hex-encoded hash.
+fn extract_hash_from_magnet(magnet: &str) -> Option<String> {
+    // Magnet links have format: magnet:?xt=urn:btih:<hash>&...
+    if !magnet.starts_with("magnet:?") {
+        return None;
+    }
+
+    // Find the btih parameter
+    for param in magnet.split('&') {
+        if param.contains("xt=urn:btih:") {
+            // Extract hash after "xt=urn:btih:"
+            if let Some(hash_start) = param.find("xt=urn:btih:") {
+                let hash = &param[hash_start + 12..]; // Skip "xt=urn:btih:"
+
+                // Hash might have additional parameters after it (like &dn=...)
+                let hash = hash.split('&').next().unwrap_or(hash);
+
+                // Validate hash length (40 chars for SHA-1 hex, 32 for base32)
+                if !hash.is_empty() {
+                    return Some(hash.to_lowercase());
+                }
+            }
+        }
+    }
+
+    None
 }

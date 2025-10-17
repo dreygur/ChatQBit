@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 torrent = { path = "../torrent" }
 telegram = { path = "../telegram" }
+fileserver = { path = "../fileserver" }
 dotenv = { workspace = true }
 tokio = { workspace = true }
 teloxide = { workspace = true }

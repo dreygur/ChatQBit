@@ -1,0 +1,25 @@
+[package]
+name = "fileserver"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+torrent = { path = "../torrent" }
+axum = "0.7"
+tokio = { workspace = true, features = ["process"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+tracing.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+hex = "0.4"
+mime_guess = "2.0"
+chrono = "0.4"
+ssh2 = "0.9"
+
+[dev-dependencies]
+dotenv.workspace = true

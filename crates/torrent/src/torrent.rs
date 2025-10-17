@@ -271,6 +271,76 @@ impl TorrentApi {
         tracing::info!("Setting global upload limit to: {}", limit);
         self.client.set_upload_limit(limit).await
     }
+
+    /// Get list of files in a torrent
+    ///
+    /// # Arguments
+    /// * `hash` - Torrent hash
+    ///
+    /// # Returns
+    /// * `Ok(Vec<TorrentContent>)` - List of files with metadata
+    /// * `Err(Error)` - Failed to fetch file list
+    pub async fn get_torrent_files(&self, hash: &str) -> Result<Vec<qbit_rs::model::TorrentContent>, Error> {
+        tracing::info!("Getting file list for torrent: {}", hash);
+        self.client.get_torrent_contents(hash, None).await
+    }
+
+    /// Set priority for specific files in a torrent
+    ///
+    /// # Arguments
+    /// * `hash` - Torrent hash
+    /// * `file_ids` - List of file indices to set priority for
+    /// * `priority` - Priority level (use qbit_rs::model::Priority enum)
+    ///
+    /// # Returns
+    /// * `Ok(())` - Priority set successfully
+    /// * `Err(Error)` - Failed to set priority
+    pub async fn set_file_priority(&self, hash: &str, file_ids: Vec<i64>, priority: qbit_rs::model::Priority) -> Result<(), Error> {
+        tracing::info!("Setting file priority for torrent {}: {:?} -> {:?}", hash, file_ids, priority);
+        self.client.set_file_priority(hash, file_ids, priority).await
+    }
+
+    /// Toggle sequential download mode for a torrent
+    ///
+    /// When enabled, pieces are downloaded in order (better for streaming)
+    ///
+    /// # Arguments
+    /// * `hash` - Torrent hash
+    ///
+    /// # Returns
+    /// * `Ok(())` - Sequential mode toggled successfully
+    /// * `Err(Error)` - Failed to toggle sequential mode
+    pub async fn toggle_sequential_download(&self, hash: &str) -> Result<(), Error> {
+        tracing::info!("Toggling sequential download for torrent: {}", hash);
+        let hashes = vec![hash.to_string()];
+        self.client.toggle_sequential_download(hashes).await
+    }
+
+    /// Toggle first/last piece priority for a torrent
+    ///
+    /// When enabled, downloads first and last pieces first (useful for media file headers)
+    ///
+    /// # Arguments
+    /// * `hash` - Torrent hash
+    ///
+    /// # Returns
+    /// * `Ok(())` - First/last piece priority toggled successfully
+    /// * `Err(Error)` - Failed to toggle priority
+    pub async fn toggle_first_last_piece_priority(&self, hash: &str) -> Result<(), Error> {
+        tracing::info!("Toggling first/last piece priority for torrent: {}", hash);
+        let hashes = vec![hash.to_string()];
+        self.client.toggle_first_last_piece_priority(hashes).await
+    }
+
+    /// Get the default save path from qBittorrent preferences
+    ///
+    /// # Returns
+    /// * `Ok(PathBuf)` - Default download directory
+    /// * `Err(Error)` - Failed to fetch preferences
+    pub async fn get_default_save_path(&self) -> Result<std::path::PathBuf, Error> {
+        tracing::info!("Getting default save path");
+        self.client.get_default_save_path().await
+    }
 }
 
 
