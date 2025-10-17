@@ -37,6 +37,13 @@ async fn main() {
     info!("Bot started successfully!");
     info!("qBittorrent client authenticated");
 
+    // Set bot commands menu
+    if let Err(e) = telegram::set_bot_commands(&bot).await {
+        tracing::warn!("Failed to set bot commands menu: {}", e);
+    } else {
+        info!("Bot commands menu registered");
+    }
+
     Dispatcher::builder(bot, telegram::schema())
         .dependencies(dptree::deps![InMemStorage::<State>::new(), client])
         .enable_ctrlc_handler()

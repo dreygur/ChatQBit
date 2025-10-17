@@ -84,6 +84,14 @@ impl TorrentApi {
         }
     }
 
+    /// Add torrents by URL (magnet links or HTTP URLs)
+    ///
+    /// # Arguments
+    /// * `urls` - Array of magnet links or torrent URLs to add
+    ///
+    /// # Returns
+    /// * `Ok(())` - Torrents added successfully
+    /// * `Err(Error)` - Failed to add torrents
     pub async fn magnet(&self, urls: &[String]) -> Result<(), Error> {
         tracing::info!("Adding torrent with URLs: {:?}", urls);
         let url_objects: Vec<_> = urls.iter()
@@ -100,6 +108,81 @@ impl TorrentApi {
                 Err(err)
             }
         }
+    }
+
+    /// Add torrent from file data
+    ///
+    /// # Arguments
+    /// * `filename` - Original filename of the .torrent file
+    /// * `file_data` - Raw bytes of the .torrent file
+    ///
+    /// # Returns
+    /// * `Ok(())` - Torrent added successfully
+    /// * `Err(Error)` - Failed to add torrent
+    pub async fn add_torrent_file(&self, filename: &str, file_data: Vec<u8>) -> Result<(), Error> {
+        tracing::info!("Adding torrent from file: {} ({} bytes)", filename, file_data.len());
+
+        let torrent_file = qbit_rs::model::TorrentFile {
+            filename: filename.to_string(),
+            data: file_data,
+        };
+
+        let arg = AddTorrentArg {
+            source: qbit_rs::model::TorrentSource::TorrentFiles {
+                torrents: vec![torrent_file],
+            },
+            ..Default::default()
+        };
+
+        match self.client.add_torrent(arg).await {
+            Ok(_) => {
+                tracing::info!("Successfully added torrent file: {}", filename);
+                Ok(())
+            }
+            Err(err) => {
+                tracing::error!("Error adding torrent file {}: {}", filename, err);
+                Err(err)
+            }
+        }
+    }
+
+    /// Check if torrents are duplicates before adding
+    ///
+    /// # Arguments
+    /// * `urls` - URLs to check for duplicates
+    ///
+    /// # Returns
+    /// * `Ok(DuplicateCheckResult)` - Result of duplicate check
+    /// * `Err(Error)` - Failed to fetch existing torrents
+    pub async fn check_duplicates(
+        &self,
+        urls: &[String],
+    ) -> Result<crate::utils::DuplicateCheckResult, Error> {
+        tracing::debug!("Checking for duplicate torrents");
+
+        // Get all existing torrents (no limit)
+        let arg = qbit_rs::model::GetTorrentListArg {
+            filter: None,
+            category: None,
+            tag: None,
+            sort: None,
+            reverse: None,
+            limit: None, // Get all torrents
+            offset: None,
+            hashes: None,
+        };
+
+        let existing_torrents = self.client.get_torrent_list(arg).await?;
+
+        // Build set of existing hashes
+        let existing_hashes: std::collections::HashSet<String> = existing_torrents
+            .iter()
+            .filter_map(|t| t.hash.as_ref().map(|h| h.to_lowercase()))
+            .collect();
+
+        tracing::debug!("Found {} existing torrents", existing_hashes.len());
+
+        Ok(crate::utils::check_duplicates(urls, &existing_hashes))
     }
 
     pub async fn get_torrent_info(&self, hash: &str) -> Result<qbit_rs::model::TorrentProperty, Error> {

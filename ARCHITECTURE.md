@@ -1,6 +1,6 @@
-# CLAUDE.md
+# ChatQBit Documentation
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Project documentation and architecture reference.
 
 ## Project Overview
 
@@ -55,10 +55,12 @@ cargo test test_login
 **Telegram Crate Structure:**
 ```
 telegram/
+├── callbacks.rs     # Inline keyboard callback handlers
 ├── commands.rs      # Command handler implementations
 ├── constants.rs     # Constants, emoji, usage messages
 ├── error.rs         # Custom error types and result aliases
 ├── handlers.rs      # Reusable command handler patterns
+├── keyboards.rs     # Inline keyboard builders
 ├── lib.rs          # Module exports
 ├── telegram.rs     # Message routing and dispatcher setup
 ├── types.rs        # Bot commands and state definitions
@@ -98,6 +100,46 @@ telegram/
 - Constants module centralizes all string literals and emojis
 - Utils module provides reusable parsing and formatting functions
 
+**Duplicate Prevention:**
+- Automatic duplicate detection when adding torrents via magnet links or .torrent files
+- Extracts info hash from magnet URLs using regex parsing
+- Extracts info hash from .torrent files by parsing bencoded data and hashing the info dictionary
+- Case-insensitive hash matching for reliability
+- Configurable via `ENABLE_DUPLICATE_CHECK` constant in constants.rs
+- Fail-open behavior: continues adding if duplicate check fails
+- User-friendly warning message showing duplicate hash
+
+**User Experience Improvements:**
+- Full torrent hashes displayed in `/list` command (not truncated)
+- Hashes formatted in monospace (backticks) for easy tap-to-copy in Telegram
+- Helpful tips in usage messages directing users to `/list` for hashes
+- Visual tip at bottom of list reminding users to tap monospace hash to copy
+
+**Interactive Bot Menus:**
+- Telegram bot command menu registered automatically on startup
+- Main interactive menu via `/menu` command with inline keyboard buttons
+- Per-torrent action keyboards (start, stop, info, delete, priority)
+- Confirmation dialogs for destructive operations (delete with data)
+- Speed limit configuration keyboard with quick actions
+- Callback query handling for all button interactions
+- Pagination support for long torrent lists (ready for implementation)
+
+**Torrent File Upload:**
+- Supports adding torrents via .torrent file uploads in addition to magnet links
+- Uses `/magnet` command to enter GetMagnet state, then accepts either text or document
+- Comprehensive file validation:
+  - Checks file extension is `.torrent`
+  - Validates file is not empty
+  - Verifies file format (must start with 'd' for bencoded dictionary)
+- Downloads file from Telegram servers using `bot.get_file()` and `bot.download_file()`
+- Extracts info hash from .torrent file by:
+  - Locating the "info" dictionary in bencoded data (searches for "4:infod" pattern)
+  - Finding matching end delimiter using depth tracking
+  - Computing SHA-1 hash of the info dictionary bytes
+- Duplicate checking works for both magnet links and .torrent files
+- User-friendly error messages for invalid files
+- Production-ready with comprehensive error handling and logging
+
 **Command Handler Pattern:**
 All handlers follow this structure:
 1. Parse and validate arguments using `utils::extract_*_arg()`
@@ -113,10 +155,13 @@ All handlers follow this structure:
 ### Available Commands
 
 **Torrent Management:**
+- `/start` - Welcome message and main menu
+- `/menu` - Interactive menu with buttons
 - `/list` - List all torrents with status and progress
+- `/magnet` - Add torrent via magnet link, URL, or .torrent file upload
 - `/info <hash>` - Detailed torrent information
-- `/start <hash|all>` - Start/resume torrents
-- `/stop <hash|all>` - Stop/pause torrents
+- `/resume <hash|all>` - Resume/start torrents
+- `/pause <hash|all>` - Pause/stop torrents
 - `/delete <hash>` - Delete torrent (keep files)
 - `/deletedata <hash>` - Delete torrent with files
 - `/recheck <hash>` - Recheck torrent data
@@ -143,7 +188,9 @@ All handlers follow this structure:
 - `new()` - Create client from environment variables
 - `login()` - Authenticate with qBittorrent
 - `query()` - Fetch torrent list (limit 10)
-- `magnet(&[String])` - Add torrents by URL
+- `magnet(&[String])` - Add torrents by URL (magnet links or HTTP)
+- `add_torrent_file(&str, Vec<u8>)` - Add torrent from .torrent file data
+- `check_duplicates(&[String])` - Check if torrents already exist
 - `get_torrent_info(&str)` - Get detailed torrent properties
 - `start_torrents/stop_torrents/delete_torrents` - Torrent control
 - `set_*_priority` - Priority management

@@ -50,7 +50,7 @@ pub fn format_timestamp(timestamp: i64) -> String {
 
     use std::time::{Duration, UNIX_EPOCH};
     let duration = Duration::from_secs(timestamp as u64);
-    let datetime = UNIX_EPOCH + duration;
+    let _datetime = UNIX_EPOCH + duration;
 
     // For simplicity, just return timestamp
     // In production, use chrono crate for proper formatting
@@ -113,6 +113,63 @@ pub fn extract_limit_arg(args: &[&str]) -> Result<u64, String> {
     args[1]
         .parse::<u64>()
         .map_err(|_| "Invalid limit value. Must be a number.".to_string())
+}
+
+/// Extract info hash from .torrent file data
+///
+/// Parses bencoded .torrent file and extracts the SHA-1 hash of the info dictionary.
+/// Returns lowercase hex-encoded info hash for duplicate checking.
+pub fn extract_torrent_info_hash(file_data: &[u8]) -> Option<String> {
+    use sha1::{Digest, Sha1};
+
+    // Find the "info" dictionary in the bencoded data
+    // Torrent files have format: d...4:info...e
+    let info_start = find_info_dict_start(file_data)?;
+    let info_end = find_matching_end(file_data, info_start)?;
+
+    // Hash the info dictionary bytes
+    let info_bytes = &file_data[info_start..info_end];
+    let mut hasher = Sha1::new();
+    hasher.update(info_bytes);
+    let hash = hasher.finalize();
+
+    // Convert to hex string
+    Some(format!("{:x}", hash))
+}
+
+/// Find the start position of the info dictionary in bencoded data
+fn find_info_dict_start(data: &[u8]) -> Option<usize> {
+    // Look for "4:infod" pattern (the info key followed by dictionary start)
+    let pattern = b"4:infod";
+    for i in 0..data.len().saturating_sub(pattern.len()) {
+        if &data[i..i + pattern.len()] == pattern {
+            // Return position after "4:info" (at the 'd' of the info dict)
+            return Some(i + 6);
+        }
+    }
+    None
+}
+
+/// Find the matching 'e' (end) for a dictionary starting at 'start'
+fn find_matching_end(data: &[u8], start: usize) -> Option<usize> {
+    if start >= data.len() || data[start] != b'd' {
+        return None;
+    }
+
+    let mut depth = 0;
+    for i in start..data.len() {
+        match data[i] {
+            b'd' | b'l' => depth += 1, // dictionary or list start
+            b'e' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + 1); // Include the 'e'
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 #[cfg(test)]

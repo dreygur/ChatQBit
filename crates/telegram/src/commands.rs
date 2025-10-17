@@ -10,8 +10,27 @@ use crate::constants::{emoji, usage, MAX_TORRENTS_DISPLAY};
 use crate::handlers::{self, execute_hash_command};
 use crate::types::{Command, HandlerResult, MyDialogue, State};
 use crate::utils;
-use teloxide::{prelude::*, utils::command::BotCommands};
+use teloxide::{net::Download, prelude::*, utils::command::BotCommands};
 use torrent::TorrentApi;
+
+/// Welcome message when user starts the bot
+pub async fn start(bot: Bot, msg: Message) -> HandlerResult {
+    let welcome_text = format!(
+        "👋 Welcome to ChatQBit!\n\n\
+        I'm your personal qBittorrent remote control bot.\n\n\
+        🎯 Quick Actions:\n\
+        • /menu - Interactive menu\n\
+        • /list - View all torrents\n\
+        • /magnet - Add new torrent\n\
+        • /help - See all commands\n\n\
+        Let's get started! Try /menu for an interactive experience."
+    );
+
+    bot.send_message(msg.chat.id, welcome_text)
+        .reply_markup(crate::keyboards::main_menu_keyboard())
+        .await?;
+    Ok(())
+}
 
 /// Display help message with available commands
 pub async fn help(bot: Bot, msg: Message) -> HandlerResult {
@@ -39,7 +58,18 @@ pub async fn get_magnet(bot: Bot, dialogue: MyDialogue, msg: Message) -> Handler
 }
 
 /// Process magnet link or torrent URL and add to qBittorrent
-pub async fn magnet(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult {
+pub async fn magnet(
+    bot: Bot,
+    dialogue: MyDialogue,
+    msg: Message,
+    torrent: TorrentApi,
+) -> HandlerResult {
+    // Handle document (file) messages
+    if let Some(document) = msg.document().cloned() {
+        return handle_torrent_file(bot, dialogue, msg, torrent, &document).await;
+    }
+
+    // Handle text messages (magnet links/URLs)
     let text = match msg.text() {
         Some(t) => t,
         None => {
@@ -47,7 +77,7 @@ pub async fn magnet(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResul
                 bot,
                 msg.chat.id,
                 emoji::ERROR,
-                "Please send a valid magnet link or torrent URL.",
+                "Please send a valid magnet link, torrent URL, or .torrent file.",
             )
             .await?;
             return Ok(());
@@ -55,6 +85,41 @@ pub async fn magnet(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResul
     };
 
     let urls = [text.to_string()];
+
+    // Check for duplicates if enabled
+    if crate::constants::ENABLE_DUPLICATE_CHECK {
+        match torrent.check_duplicates(&urls).await {
+            Ok(torrent::DuplicateCheckResult::Duplicates(hashes)) => {
+                let hash_list = hashes
+                    .iter()
+                    .map(|h| utils::truncate_hash(h, 8))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let message = format!(
+                    "⚠️ Duplicate torrent detected!\n\n\
+                    This torrent is already in your download queue:\n\
+                    Hash: {}\n\n\
+                    Torrent was not added to avoid duplicates.",
+                    hash_list
+                );
+
+                bot.send_message(msg.chat.id, message).await?;
+                dialogue.exit().await?;
+                return Ok(());
+            }
+            Ok(torrent::DuplicateCheckResult::NoDuplicates) => {
+                // Continue to add torrent
+                tracing::debug!("No duplicates found, proceeding to add torrent");
+            }
+            Err(err) => {
+                // Log error but continue with adding (fail-open behavior)
+                tracing::warn!("Duplicate check failed, proceeding anyway: {}", err);
+            }
+        }
+    }
+
+    // Add the torrent
     match torrent.magnet(&urls).await {
         Ok(_) => {
             handlers::send_response(
@@ -67,10 +132,155 @@ pub async fn magnet(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResul
         }
         Err(err) => {
             tracing::error!("Failed to add torrent: {}", err);
-            bot.send_message(msg.chat.id, format!("{} Failed to add torrent: {}", emoji::ERROR, err))
-                .await?;
+            bot.send_message(
+                msg.chat.id,
+                format!("{} Failed to add torrent: {}", emoji::ERROR, err),
+            )
+            .await?;
         }
     }
+
+    dialogue.exit().await?;
+    Ok(())
+}
+
+/// Handle .torrent file uploads
+async fn handle_torrent_file(
+    bot: Bot,
+    dialogue: MyDialogue,
+    msg: Message,
+    torrent: TorrentApi,
+    document: &teloxide::types::Document,
+) -> HandlerResult {
+    // Validate file extension
+    let filename = document.file_name.as_deref().unwrap_or("unknown");
+    if !filename.ends_with(".torrent") {
+        bot.send_message(
+            msg.chat.id,
+            format!(
+                "{} Invalid file type. Please send a .torrent file.\n\nReceived: {}",
+                emoji::ERROR, filename
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    tracing::info!("Received torrent file: {} ({} bytes)", filename, document.file.size);
+
+    // Download file from Telegram servers
+    let file = match bot.get_file(&document.file.id).await {
+        Ok(f) => f,
+        Err(err) => {
+            tracing::error!("Failed to get file from Telegram: {}", err);
+            bot.send_message(
+                msg.chat.id,
+                format!("{} Failed to retrieve file: {}", emoji::ERROR, err),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    let mut file_data = Vec::new();
+    match bot.download_file(&file.path, &mut file_data).await {
+        Ok(_) => {
+            tracing::info!("Downloaded file: {} bytes", file_data.len());
+        }
+        Err(err) => {
+            tracing::error!("Failed to download file: {}", err);
+            bot.send_message(
+                msg.chat.id,
+                format!("{} Failed to download file: {}", emoji::ERROR, err),
+            )
+            .await?;
+            return Ok(());
+        }
+    }
+
+    // Validate file is actually a .torrent file (basic check)
+    if file_data.is_empty() {
+        bot.send_message(
+            msg.chat.id,
+            format!("{} File is empty", emoji::ERROR),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // Torrent files start with "d8:" (bencoded dictionary)
+    if !file_data.starts_with(b"d") {
+        bot.send_message(
+            msg.chat.id,
+            format!("{} Invalid .torrent file format", emoji::ERROR),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // Check for duplicates if enabled
+    if crate::constants::ENABLE_DUPLICATE_CHECK {
+        // Extract info hash from torrent file for duplicate checking
+        if let Some(info_hash) = utils::extract_torrent_info_hash(&file_data) {
+            tracing::debug!("Extracted info hash from torrent file: {}", info_hash);
+
+            let dummy_magnet = format!("magnet:?xt=urn:btih:{}", info_hash);
+            let urls = [dummy_magnet];
+
+            match torrent.check_duplicates(&urls).await {
+                Ok(torrent::DuplicateCheckResult::Duplicates(hashes)) => {
+                    let hash_list = hashes
+                        .iter()
+                        .map(|h| utils::truncate_hash(h, 8))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    let message = format!(
+                        "⚠️ Duplicate torrent detected!\n\n\
+                        This torrent is already in your download queue:\n\
+                        Hash: {}\n\n\
+                        Torrent was not added to avoid duplicates.",
+                        hash_list
+                    );
+
+                    bot.send_message(msg.chat.id, message).await?;
+                    dialogue.exit().await?;
+                    return Ok(());
+                }
+                Ok(torrent::DuplicateCheckResult::NoDuplicates) => {
+                    tracing::debug!("No duplicates found, proceeding to add torrent file");
+                }
+                Err(err) => {
+                    tracing::warn!("Duplicate check failed for torrent file, proceeding anyway: {}", err);
+                }
+            }
+        } else {
+            tracing::warn!("Could not extract info hash from torrent file for duplicate checking");
+        }
+    }
+
+    // Add the torrent file
+    match torrent.add_torrent_file(filename, file_data).await {
+        Ok(_) => {
+            handlers::send_response(
+                bot,
+                msg.chat.id,
+                emoji::SUCCESS,
+                &format!("Torrent file '{}' added successfully to download queue!", filename),
+            )
+            .await?;
+        }
+        Err(err) => {
+            tracing::error!("Failed to add torrent file: {}", err);
+            bot.send_message(
+                msg.chat.id,
+                format!("{} Failed to add torrent file: {}", emoji::ERROR, err),
+            )
+            .await?;
+        }
+    }
+
+    dialogue.exit().await?;
     Ok(())
 }
 
@@ -102,6 +312,9 @@ pub async fn list(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult 
             torrents.len() - MAX_TORRENTS_DISPLAY
         ));
     }
+
+    // Add helpful tip about using hashes
+    response.push_str("\n💡 Tip: Tap the hash (monospace text) to copy it for use in commands.");
 
     bot.send_message(msg.chat.id, response).await?;
     Ok(())
@@ -135,27 +348,27 @@ pub async fn info(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult 
     Ok(())
 }
 
-/// Start/resume torrents
-pub async fn start(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult {
+/// Resume/start torrents
+pub async fn resume(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult {
     execute_hash_command(
         bot,
         msg,
         torrent,
-        usage::START,
-        "Torrent(s) started successfully!",
+        usage::RESUME,
+        "Torrent(s) resumed successfully!",
         |api, hash| async move { api.start_torrents(&hash).await },
     )
     .await
 }
 
-/// Stop/pause torrents
-pub async fn stop(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult {
+/// Pause/stop torrents
+pub async fn pause(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult {
     execute_hash_command(
         bot,
         msg,
         torrent,
-        usage::STOP,
-        "Torrent(s) stopped successfully!",
+        usage::PAUSE,
+        "Torrent(s) paused successfully!",
         |api, hash| async move { api.stop_torrents(&hash).await },
     )
     .await
@@ -414,6 +627,14 @@ pub async fn set_up_limit(bot: Bot, msg: Message, torrent: TorrentApi) -> Handle
         }
     }
 
+    Ok(())
+}
+
+/// Show interactive menu
+pub async fn menu(bot: Bot, msg: Message) -> HandlerResult {
+    bot.send_message(msg.chat.id, "🤖 Main Menu - Choose an action:")
+        .reply_markup(crate::keyboards::main_menu_keyboard())
+        .await?;
     Ok(())
 }
 

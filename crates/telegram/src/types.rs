@@ -26,18 +26,22 @@ pub enum State {
     description = "These commands are supported:"
 )]
 pub enum Command {
+    #[command(description = "Start the bot and show welcome message")]
+    Start,
     #[command(description = "Display help information")]
     Help,
+    #[command(description = "Show interactive menu")]
+    Menu,
     #[command(description = "Add a torrent via magnet link or URL")]
     Magnet,
     #[command(description = "List all torrents with status and progress")]
     List,
     #[command(description = "Get detailed info about a torrent (usage: /info <hash>)")]
     Info,
-    #[command(description = "Start/resume torrents (usage: /start <hash> or /start all)")]
-    Start,
-    #[command(description = "Stop/pause torrents (usage: /stop <hash> or /stop all)")]
-    Stop,
+    #[command(description = "Resume/start torrents (usage: /resume <hash> or /resume all)")]
+    Resume,
+    #[command(description = "Pause/stop torrents (usage: /pause <hash> or /pause all)")]
+    Pause,
     #[command(description = "Delete torrent (usage: /delete <hash> or /deletedata <hash>)")]
     Delete,
     #[command(description = "Delete torrent with files (usage: /deletedata <hash>)")]

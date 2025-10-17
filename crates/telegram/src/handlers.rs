@@ -69,13 +69,12 @@ pub fn format_torrent_item(torrent: &qbit_rs::model::Torrent) -> String {
         .unwrap_or_else(|| "Unknown".to_string());
 
     let hash = torrent.hash.as_deref().unwrap_or("Unknown");
-    let short_hash = utils::truncate_hash(hash, 8);
 
     format!(
-        "{} {}\n   Hash: {}\n   Status: {}\n   Progress: {:.2}%\n   Size: {}\n\n",
+        "{} {}\n   Hash: `{}`\n   Status: {}\n   Progress: {:.2}%\n   Size: {}\n\n",
         emoji::FOLDER,
         torrent.name.as_deref().unwrap_or("Unknown"),
-        short_hash,
+        hash,
         status,
         torrent.progress.unwrap_or(0.0) * 100.0,
         utils::format_bytes(torrent.size.unwrap_or(0))
