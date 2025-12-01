@@ -195,22 +195,30 @@ impl ServerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
+
+    fn create_test_state() -> ServerState {
+        dotenv::dotenv().ok();
+        let torrent_api = TorrentApi::new();
+        ServerState::new(PathBuf::from("/downloads"), "secret".to_string(), torrent_api)
+    }
+
+    fn create_test_stream_info(hash: &str, filename: &str) -> StreamInfo {
+        StreamInfo {
+            torrent_hash: hash.to_string(),
+            file_index: 0,
+            file_path: PathBuf::from(format!("/downloads/{}", filename)),
+            filename: filename.to_string(),
+            created_at: Utc::now(),
+        }
+    }
 
     #[test]
     fn test_state_operations() {
-        dotenv::dotenv().ok();
-        let torrent_api = TorrentApi::new();
-        let state = ServerState::new(PathBuf::from("/downloads"), "secret".to_string(), torrent_api);
+        let state = create_test_state();
+        let info = create_test_stream_info("abc123", "video.mp4");
 
-        let info = StreamInfo {
-            torrent_hash: "abc123".to_string(),
-            file_index: 0,
-            file_path: PathBuf::from("/downloads/video.mp4"),
-            filename: "video.mp4".to_string(),
-            created_at: Utc::now(),
-        };
-
-        state.register_stream("token1".to_string(), info.clone());
+        state.register_stream("token1".to_string(), info);
         assert_eq!(state.stream_count(), 1);
 
         let retrieved = state.get_stream("token1");
@@ -219,5 +227,150 @@ mod tests {
 
         state.unregister_stream("token1");
         assert_eq!(state.stream_count(), 0);
+    }
+
+    #[test]
+    fn test_get_stream_nonexistent() {
+        let state = create_test_state();
+        assert!(state.get_stream("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_multiple_streams() {
+        let state = create_test_state();
+
+        state.register_stream("token1".to_string(), create_test_stream_info("hash1", "file1.mp4"));
+        state.register_stream("token2".to_string(), create_test_stream_info("hash2", "file2.mp4"));
+        state.register_stream("token3".to_string(), create_test_stream_info("hash3", "file3.mp4"));
+
+        assert_eq!(state.stream_count(), 3);
+
+        // Check each stream
+        assert_eq!(state.get_stream("token1").unwrap().torrent_hash, "hash1");
+        assert_eq!(state.get_stream("token2").unwrap().torrent_hash, "hash2");
+        assert_eq!(state.get_stream("token3").unwrap().torrent_hash, "hash3");
+
+        // Remove one
+        state.unregister_stream("token2");
+        assert_eq!(state.stream_count(), 2);
+        assert!(state.get_stream("token2").is_none());
+    }
+
+    #[test]
+    fn test_get_stream_if_valid_not_expired() {
+        let state = create_test_state();
+        let info = create_test_stream_info("abc123", "video.mp4");
+
+        state.register_stream("token1".to_string(), info);
+
+        // Fresh stream should be valid
+        let result = state.get_stream_if_valid("token1", 24);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().torrent_hash, "abc123");
+    }
+
+    #[test]
+    fn test_get_stream_if_valid_expired() {
+        let state = create_test_state();
+
+        // Create an old stream (25 hours old)
+        let old_time = Utc::now() - Duration::hours(25);
+        let info = StreamInfo {
+            torrent_hash: "abc123".to_string(),
+            file_index: 0,
+            file_path: PathBuf::from("/downloads/video.mp4"),
+            filename: "video.mp4".to_string(),
+            created_at: old_time,
+        };
+
+        state.register_stream("token1".to_string(), info);
+
+        // Stream should be expired with 24 hour limit
+        let result = state.get_stream_if_valid("token1", 24);
+        assert!(result.is_none());
+
+        // But still accessible via get_stream
+        assert!(state.get_stream("token1").is_some());
+    }
+
+    #[test]
+    fn test_get_stream_if_valid_nonexistent() {
+        let state = create_test_state();
+        assert!(state.get_stream_if_valid("nonexistent", 24).is_none());
+    }
+
+    #[test]
+    fn test_cleanup_old_streams() {
+        let state = create_test_state();
+
+        // Add fresh stream
+        state.register_stream("fresh".to_string(), create_test_stream_info("hash1", "fresh.mp4"));
+
+        // Add old stream (25 hours old)
+        let old_time = Utc::now() - Duration::hours(25);
+        let old_info = StreamInfo {
+            torrent_hash: "old_hash".to_string(),
+            file_index: 0,
+            file_path: PathBuf::from("/downloads/old.mp4"),
+            filename: "old.mp4".to_string(),
+            created_at: old_time,
+        };
+        state.register_stream("old".to_string(), old_info);
+
+        assert_eq!(state.stream_count(), 2);
+
+        // Cleanup with 24 hour threshold
+        let cleaned = state.cleanup_old_streams(24);
+        assert_eq!(cleaned, 1);
+        assert_eq!(state.stream_count(), 1);
+
+        // Fresh stream should still exist
+        assert!(state.get_stream("fresh").is_some());
+        // Old stream should be gone
+        assert!(state.get_stream("old").is_none());
+    }
+
+    #[test]
+    fn test_cleanup_no_old_streams() {
+        let state = create_test_state();
+
+        state.register_stream("token1".to_string(), create_test_stream_info("hash1", "file1.mp4"));
+        state.register_stream("token2".to_string(), create_test_stream_info("hash2", "file2.mp4"));
+
+        let cleaned = state.cleanup_old_streams(24);
+        assert_eq!(cleaned, 0);
+        assert_eq!(state.stream_count(), 2);
+    }
+
+    #[test]
+    fn test_download_path() {
+        dotenv::dotenv().ok();
+        let torrent_api = TorrentApi::new();
+        let state = ServerState::new(PathBuf::from("/custom/path"), "secret".to_string(), torrent_api);
+        assert_eq!(state.download_path(), &PathBuf::from("/custom/path"));
+    }
+
+    #[test]
+    fn test_secret() {
+        dotenv::dotenv().ok();
+        let torrent_api = TorrentApi::new();
+        let state = ServerState::new(PathBuf::from("/downloads"), "my_secret".to_string(), torrent_api);
+        assert_eq!(state.secret(), "my_secret");
+    }
+
+    #[test]
+    fn test_overwrite_stream() {
+        let state = create_test_state();
+
+        let info1 = create_test_stream_info("hash1", "file1.mp4");
+        let info2 = create_test_stream_info("hash2", "file2.mp4");
+
+        state.register_stream("token1".to_string(), info1);
+        assert_eq!(state.get_stream("token1").unwrap().torrent_hash, "hash1");
+
+        // Overwrite with new info
+        state.register_stream("token1".to_string(), info2);
+        assert_eq!(state.get_stream("token1").unwrap().torrent_hash, "hash2");
+        assert_eq!(state.stream_count(), 1);
     }
 }

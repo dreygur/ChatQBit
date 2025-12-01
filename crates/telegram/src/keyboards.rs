@@ -172,11 +172,66 @@ pub fn speed_limit_keyboard() -> InlineKeyboardMarkup {
 mod tests {
     use super::*;
 
+    /// Helper to create a test torrent
+    fn create_test_torrent(hash: Option<&str>, name: Option<&str>) -> qbit_rs::model::Torrent {
+        qbit_rs::model::Torrent {
+            added_on: None,
+            amount_left: None,
+            auto_tmm: None,
+            availability: None,
+            category: None,
+            completed: None,
+            completion_on: None,
+            content_path: None,
+            dl_limit: None,
+            dlspeed: None,
+            downloaded: None,
+            downloaded_session: None,
+            eta: None,
+            f_l_piece_prio: None,
+            force_start: None,
+            hash: hash.map(|s| s.to_string()),
+            last_activity: None,
+            magnet_uri: None,
+            max_ratio: None,
+            max_seeding_time: None,
+            name: name.map(|s| s.to_string()),
+            num_complete: None,
+            num_incomplete: None,
+            num_leechs: None,
+            num_seeds: None,
+            priority: None,
+            progress: None,
+            ratio: None,
+            ratio_limit: None,
+            save_path: None,
+            seeding_time: None,
+            seeding_time_limit: None,
+            seen_complete: None,
+            seq_dl: None,
+            size: None,
+            state: None,
+            super_seeding: None,
+            tags: None,
+            time_active: None,
+            total_size: None,
+            tracker: None,
+            up_limit: None,
+            uploaded: None,
+            uploaded_session: None,
+            upspeed: None,
+        }
+    }
+
     #[test]
     fn test_torrent_actions_keyboard() {
         let keyboard = torrent_actions_keyboard("abc123");
         assert!(!keyboard.inline_keyboard.is_empty());
         assert_eq!(keyboard.inline_keyboard.len(), 4); // 4 rows of buttons
+
+        // Check callback data format
+        let first_row = &keyboard.inline_keyboard[0];
+        assert_eq!(first_row.len(), 2); // Resume and Pause
     }
 
     #[test]
@@ -184,6 +239,18 @@ mod tests {
         let keyboard = confirm_keyboard("delete", "abc123");
         assert_eq!(keyboard.inline_keyboard.len(), 1);
         assert_eq!(keyboard.inline_keyboard[0].len(), 2); // Yes and No buttons
+
+        // Test with different action
+        let keyboard = confirm_keyboard("deletedata", "xyz789");
+        assert_eq!(keyboard.inline_keyboard.len(), 1);
+    }
+
+    #[test]
+    fn test_main_menu_keyboard() {
+        let keyboard = main_menu_keyboard();
+        assert!(!keyboard.inline_keyboard.is_empty());
+        // Should have multiple rows
+        assert!(keyboard.inline_keyboard.len() >= 3);
     }
 
     #[test]
@@ -192,8 +259,76 @@ mod tests {
         let keyboard = pagination_keyboard(0, 1);
         assert_eq!(keyboard.inline_keyboard.len(), 1);
 
-        // Multiple pages - should have navigation + refresh
+        // First page of multiple - should have next + refresh
+        let keyboard = pagination_keyboard(0, 3);
+        assert_eq!(keyboard.inline_keyboard.len(), 2);
+        assert!(keyboard.inline_keyboard[0].len() >= 2); // Page counter + Next
+
+        // Middle page - should have prev + page + next + refresh
         let keyboard = pagination_keyboard(1, 3);
         assert_eq!(keyboard.inline_keyboard.len(), 2);
+        assert_eq!(keyboard.inline_keyboard[0].len(), 3); // Prev + Page + Next
+
+        // Last page - should have prev + refresh
+        let keyboard = pagination_keyboard(2, 3);
+        assert_eq!(keyboard.inline_keyboard.len(), 2);
+        assert!(keyboard.inline_keyboard[0].len() >= 2); // Prev + Page counter
+    }
+
+    #[test]
+    fn test_torrent_select_keyboard() {
+        // Empty list
+        let empty: Vec<qbit_rs::model::Torrent> = vec![];
+        let keyboard = torrent_select_keyboard(&empty, "resume", "▶️");
+        assert_eq!(keyboard.inline_keyboard.len(), 1); // Just cancel button
+
+        // Single torrent
+        let torrents = vec![create_test_torrent(Some("abc123"), Some("Test Torrent"))];
+        let keyboard = torrent_select_keyboard(&torrents, "resume", "▶️");
+        assert_eq!(keyboard.inline_keyboard.len(), 2); // 1 torrent + cancel
+
+        // Multiple torrents
+        let torrents: Vec<qbit_rs::model::Torrent> = (0..5)
+            .map(|i| create_test_torrent(Some(&format!("hash{}", i)), Some(&format!("Torrent {}", i))))
+            .collect();
+        let keyboard = torrent_select_keyboard(&torrents, "pause", "⏸️");
+        assert_eq!(keyboard.inline_keyboard.len(), 6); // 5 torrents + cancel
+
+        // Long name truncation
+        let torrents = vec![create_test_torrent(
+            Some("abc123"),
+            Some("This is a very long torrent name that should be truncated"),
+        )];
+        let keyboard = torrent_select_keyboard(&torrents, "info", "🔍");
+        // Button text should be truncated
+        assert_eq!(keyboard.inline_keyboard.len(), 2);
+    }
+
+    #[test]
+    fn test_torrent_select_keyboard_max_10() {
+        // More than 10 torrents - should only show 10
+        let torrents: Vec<qbit_rs::model::Torrent> = (0..15)
+            .map(|i| create_test_torrent(Some(&format!("hash{:02}", i)), Some(&format!("Torrent {}", i))))
+            .collect();
+        let keyboard = torrent_select_keyboard(&torrents, "stream", "🎬");
+        assert_eq!(keyboard.inline_keyboard.len(), 11); // 10 torrents + cancel
+    }
+
+    #[test]
+    fn test_torrent_select_keyboard_missing_hash() {
+        // Torrent without hash should be skipped
+        let torrents = vec![
+            create_test_torrent(None, Some("No Hash")),
+            create_test_torrent(Some("abc123"), Some("Has Hash")),
+        ];
+        let keyboard = torrent_select_keyboard(&torrents, "files", "📁");
+        assert_eq!(keyboard.inline_keyboard.len(), 2); // 1 valid torrent + cancel
+    }
+
+    #[test]
+    fn test_speed_limit_keyboard() {
+        let keyboard = speed_limit_keyboard();
+        assert!(!keyboard.inline_keyboard.is_empty());
+        assert!(keyboard.inline_keyboard.len() >= 2); // At least set + remove rows
     }
 }

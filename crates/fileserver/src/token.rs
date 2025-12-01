@@ -42,17 +42,106 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_token_generation() {
+    fn test_token_generation_deterministic() {
+        // Same inputs should produce same token
         let token1 = generate_stream_token("abc123", 0, "secret");
         let token2 = generate_stream_token("abc123", 0, "secret");
         assert_eq!(token1, token2);
     }
 
     #[test]
-    fn test_token_verification() {
+    fn test_token_generation_different_hash() {
+        let token1 = generate_stream_token("abc123", 0, "secret");
+        let token2 = generate_stream_token("xyz789", 0, "secret");
+        assert_ne!(token1, token2);
+    }
+
+    #[test]
+    fn test_token_generation_different_index() {
+        let token1 = generate_stream_token("abc123", 0, "secret");
+        let token2 = generate_stream_token("abc123", 1, "secret");
+        assert_ne!(token1, token2);
+    }
+
+    #[test]
+    fn test_token_generation_different_secret() {
+        let token1 = generate_stream_token("abc123", 0, "secret1");
+        let token2 = generate_stream_token("abc123", 0, "secret2");
+        assert_ne!(token1, token2);
+    }
+
+    #[test]
+    fn test_token_length() {
+        let token = generate_stream_token("abc123", 0, "secret");
+        // Token should be 16 hex characters (8 bytes)
+        assert_eq!(token.len(), 16);
+        // Token should be valid hex
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_token_verification_valid() {
         let token = generate_stream_token("abc123", 0, "secret");
         assert!(verify_stream_token(&token, "abc123", 0, "secret"));
-        assert!(!verify_stream_token(&token, "abc123", 1, "secret"));
+    }
+
+    #[test]
+    fn test_token_verification_wrong_hash() {
+        let token = generate_stream_token("abc123", 0, "secret");
         assert!(!verify_stream_token(&token, "different", 0, "secret"));
+    }
+
+    #[test]
+    fn test_token_verification_wrong_index() {
+        let token = generate_stream_token("abc123", 0, "secret");
+        assert!(!verify_stream_token(&token, "abc123", 1, "secret"));
+    }
+
+    #[test]
+    fn test_token_verification_wrong_secret() {
+        let token = generate_stream_token("abc123", 0, "secret");
+        assert!(!verify_stream_token(&token, "abc123", 0, "wrong_secret"));
+    }
+
+    #[test]
+    fn test_token_verification_invalid_token() {
+        assert!(!verify_stream_token("invalid", "abc123", 0, "secret"));
+        assert!(!verify_stream_token("", "abc123", 0, "secret"));
+    }
+
+    #[test]
+    fn test_token_with_empty_inputs() {
+        // Empty hash
+        let token1 = generate_stream_token("", 0, "secret");
+        assert_eq!(token1.len(), 16);
+
+        // Empty secret
+        let token2 = generate_stream_token("abc123", 0, "");
+        assert_eq!(token2.len(), 16);
+
+        // Both should be different
+        assert_ne!(token1, token2);
+    }
+
+    #[test]
+    fn test_token_with_large_index() {
+        let token = generate_stream_token("abc123", usize::MAX, "secret");
+        assert_eq!(token.len(), 16);
+        assert!(verify_stream_token(&token, "abc123", usize::MAX, "secret"));
+    }
+
+    #[test]
+    fn test_token_with_special_characters() {
+        // Hash with special characters
+        let token = generate_stream_token("abc123!@#$%^&*()", 0, "secret!@#");
+        assert_eq!(token.len(), 16);
+        assert!(verify_stream_token(&token, "abc123!@#$%^&*()", 0, "secret!@#"));
+    }
+
+    #[test]
+    fn test_token_with_unicode() {
+        let token = generate_stream_token("abc123", 0, "秘密");
+        assert_eq!(token.len(), 16);
+        assert!(verify_stream_token(&token, "abc123", 0, "秘密"));
     }
 }

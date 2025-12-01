@@ -248,3 +248,161 @@ pub async fn enable_sequential_mode(torrent: &TorrentApi, hash: &str) {
         tracing::warn!("Failed to enable first/last piece priority: {}", err);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to create a test torrent
+    fn create_test_torrent(name: Option<&str>, hash: Option<&str>, progress: Option<f64>, size: Option<i64>) -> qbit_rs::model::Torrent {
+        qbit_rs::model::Torrent {
+            added_on: None,
+            amount_left: None,
+            auto_tmm: None,
+            availability: None,
+            category: None,
+            completed: None,
+            completion_on: None,
+            content_path: None,
+            dl_limit: None,
+            dlspeed: None,
+            downloaded: None,
+            downloaded_session: None,
+            eta: None,
+            f_l_piece_prio: None,
+            force_start: None,
+            hash: hash.map(|s| s.to_string()),
+            last_activity: None,
+            magnet_uri: None,
+            max_ratio: None,
+            max_seeding_time: None,
+            name: name.map(|s| s.to_string()),
+            num_complete: None,
+            num_incomplete: None,
+            num_leechs: None,
+            num_seeds: None,
+            priority: None,
+            progress,
+            ratio: None,
+            ratio_limit: None,
+            save_path: None,
+            seeding_time: None,
+            seeding_time_limit: None,
+            seen_complete: None,
+            seq_dl: None,
+            size,
+            state: None,
+            super_seeding: None,
+            tags: None,
+            time_active: None,
+            total_size: None,
+            tracker: None,
+            up_limit: None,
+            uploaded: None,
+            uploaded_session: None,
+            upspeed: None,
+        }
+    }
+
+    #[test]
+    fn test_format_torrent_item() {
+        let torrent = create_test_torrent(
+            Some("Test Torrent"),
+            Some("abc123def456"),
+            Some(0.5),
+            Some(1073741824),
+        );
+
+        let formatted = format_torrent_item(&torrent);
+        assert!(formatted.contains("Test Torrent"));
+        assert!(formatted.contains("abc123def456"));
+        assert!(formatted.contains("50.00%"));
+    }
+
+    #[test]
+    fn test_format_torrent_item_unknown() {
+        let torrent = create_test_torrent(None, None, None, None);
+
+        let formatted = format_torrent_item(&torrent);
+        assert!(formatted.contains("Unknown"));
+    }
+
+    #[test]
+    fn test_format_torrent_info() {
+        let info = qbit_rs::model::TorrentProperty {
+            save_path: Some("/downloads".to_string()),
+            total_size: Some(1073741824),
+            total_downloaded: Some(536870912),
+            total_uploaded: Some(268435456),
+            total_uploaded_session: None,
+            total_downloaded_session: None,
+            dl_speed: Some(1048576),
+            up_speed: Some(524288),
+            seeds: Some(10),
+            seeds_total: Some(100),
+            peers: Some(5),
+            peers_total: Some(50),
+            share_ratio: Some(0.5),
+            eta: Some(3600),
+            addition_date: Some(1704067200),
+            completion_date: Some(0),
+            creation_date: None,
+            comment: None,
+            created_by: None,
+            dl_limit: None,
+            dl_speed_avg: None,
+            last_seen: None,
+            nb_connections: None,
+            nb_connections_limit: None,
+            piece_size: None,
+            pieces_have: None,
+            pieces_num: None,
+            reannounce: None,
+            seeding_time: None,
+            time_elapsed: None,
+            total_wasted: None,
+            up_limit: None,
+            up_speed_avg: None,
+        };
+
+        let formatted = format_torrent_info(&info);
+        assert!(formatted.contains("/downloads"));
+        assert!(formatted.contains("1.00 GB")); // total_size
+        assert!(formatted.contains("10 (100)")); // seeds
+        assert!(formatted.contains("5 (50)")); // peers
+        assert!(formatted.contains("0.50")); // ratio
+    }
+
+    #[test]
+    fn test_format_transfer_info() {
+        let info = qbit_rs::model::TransferInfo {
+            dl_info_speed: 1048576, // 1 MB/s
+            up_info_speed: 524288,  // 512 KB/s
+            dl_info_data: 1073741824, // 1 GB
+            up_info_data: 536870912,  // 512 MB
+            dl_rate_limit: 0,
+            up_rate_limit: 1048576,
+            dht_nodes: 0,
+            connection_status: qbit_rs::model::ConnectionStatus::Connected,
+        };
+
+        let formatted = format_transfer_info(&info);
+        assert!(formatted.contains("1.00 MB/s")); // dl speed
+        assert!(formatted.contains("512.00 KB/s")); // up speed
+        assert!(formatted.contains("Unlimited")); // dl limit
+    }
+
+    #[test]
+    fn test_parse_action_from_usage() {
+        assert_eq!(parse_action_from_usage("Usage: /resume <hash>"), ("resume", "▶️"));
+        assert_eq!(parse_action_from_usage("Usage: /pause <hash>"), ("pause", "⏸️"));
+        assert_eq!(parse_action_from_usage("Usage: /delete <hash>"), ("delete", "🗑️"));
+        assert_eq!(parse_action_from_usage("Usage: /deletedata <hash>"), ("deletedata", "🗑️💥"));
+        assert_eq!(parse_action_from_usage("Usage: /recheck <hash>"), ("recheck", "🔄"));
+        assert_eq!(parse_action_from_usage("Usage: /reannounce <hash>"), ("reannounce", "📢"));
+        assert_eq!(parse_action_from_usage("Usage: /topprio <hash>"), ("topprio", "⬆️"));
+        assert_eq!(parse_action_from_usage("Usage: /bottomprio <hash>"), ("bottomprio", "⬇️"));
+        assert_eq!(parse_action_from_usage("Usage: /info <hash>"), ("info", "🔍"));
+        assert_eq!(parse_action_from_usage("Unknown command"), ("action", "⚡"));
+    }
+}

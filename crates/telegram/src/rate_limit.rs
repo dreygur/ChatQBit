@@ -87,18 +87,102 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_rate_limiter() {
+    fn test_rate_limiter_first_request() {
         let limiter = RateLimiter::new();
-
-        // First request should pass
+        // First request should always pass
         assert!(limiter.check(123));
+    }
+
+    #[test]
+    fn test_rate_limiter_immediate_second_request() {
+        let limiter = RateLimiter::new();
+        limiter.check(123);
 
         // Immediate second request should fail (if interval > 0)
         if RATE_LIMIT_SECONDS > 0 {
             assert!(!limiter.check(123));
         }
+    }
 
-        // Different user should pass
+    #[test]
+    fn test_rate_limiter_different_users() {
+        let limiter = RateLimiter::new();
+
+        // Both users should pass on first request
+        assert!(limiter.check(123));
         assert!(limiter.check(456));
+        assert!(limiter.check(789));
+
+        // All should be rate limited on immediate second request
+        if RATE_LIMIT_SECONDS > 0 {
+            assert!(!limiter.check(123));
+            assert!(!limiter.check(456));
+            assert!(!limiter.check(789));
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_cleanup() {
+        let limiter = RateLimiter::new();
+
+        // Add some users
+        limiter.check(123);
+        limiter.check(456);
+        limiter.check(789);
+
+        // Cleanup should not panic
+        limiter.cleanup();
+
+        // Fresh entries should still be present (cleanup threshold is 60 seconds)
+        // They will be rate limited
+        if RATE_LIMIT_SECONDS > 0 {
+            assert!(!limiter.check(123));
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_default() {
+        let limiter: RateLimiter = Default::default();
+        assert!(limiter.check(999));
+    }
+
+    #[test]
+    fn test_global_rate_limiter() {
+        // Test that global rate limiter is accessible
+        let _limiter = rate_limiter();
+    }
+
+    #[test]
+    fn test_check_rate_limit_function() {
+        // This may already be rate limited from previous tests
+        // Just verify it doesn't panic
+        let _result = check_rate_limit(12345);
+    }
+
+    #[test]
+    fn test_rate_limiter_thread_safety() {
+        use std::thread;
+
+        let limiter = std::sync::Arc::new(RateLimiter::new());
+        let mut handles = vec![];
+
+        // Spawn multiple threads accessing the rate limiter
+        for i in 0..10 {
+            let limiter = limiter.clone();
+            handles.push(thread::spawn(move || {
+                for j in 0..100 {
+                    let user_id = (i * 100 + j) as u64;
+                    let _ = limiter.check(user_id);
+                }
+            }));
+        }
+
+        // Wait for all threads
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Cleanup should work after concurrent access
+        limiter.cleanup();
     }
 }
