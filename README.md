@@ -4,11 +4,12 @@ Project documentation and architecture reference.
 
 ## Project Overview
 
-ChatQBit is a feature-rich Telegram bot written in Rust that provides comprehensive remote control of a qBittorrent client via Telegram. The project is organized as a Cargo workspace with three crates following clean architecture principles:
+ChatQBit is a feature-rich Telegram bot written in Rust that provides comprehensive remote control of a qBittorrent client via Telegram. The project is organized as a Cargo workspace with four crates following clean architecture principles:
 
 - **chatqbit** (main binary): Entry point that initializes the bot, authenticates with qBittorrent, and wires up dependencies
 - **telegram**: Handles Telegram bot logic, commands, dialogue state management, message routing, and user interaction formatting
 - **torrent**: Provides a clean API wrapper around qbit-rs for qBittorrent operations
+- **fileserver**: HTTP server for streaming torrent files with range request support and secure token authentication
 
 ## Features
 
@@ -81,7 +82,11 @@ cargo test test_login
 ```
 telegram/
 ├── callbacks.rs     # Inline keyboard callback handlers
-├── commands.rs      # Command handler implementations
+├── commands/        # Modular command handlers
+│   ├── mod.rs       # Command module exports
+│   ├── torrent.rs   # Torrent management commands
+│   ├── system.rs    # System info commands
+│   └── streaming.rs # Streaming commands
 ├── constants.rs     # Constants, emoji, usage messages
 ├── error.rs         # Custom error types and result aliases
 ├── handlers.rs      # Reusable command handler patterns
@@ -92,18 +97,32 @@ telegram/
 └── utils.rs        # Formatting and parsing utilities
 ```
 
+**Fileserver Crate Structure:**
+```
+fileserver/
+├── lib.rs           # Module exports and FileServerApi
+├── server.rs        # Axum HTTP server with range request handling
+├── state.rs         # Thread-safe stream registry
+└── token.rs         # SHA-256 token generation and verification
+```
+
 ### Application Flow
 
-1. **Initialization** (crates/chatqbit/src/main.rs:11-46):
+1. **Initialization** (crates/chatqbit/src/main.rs:11-94):
    - Loads environment variables from `.env`
    - Initializes structured logging with tracing
    - Creates and authenticates TorrentApi client
+   - Fetches qBittorrent download path for file server
+   - Initializes FileServerApi with download path, secret, and base URL
+   - Spawns file server in background task via `tokio::spawn`
+   - Registers bot commands menu via `set_bot_commands()`
    - Sets up teloxide dispatcher with InMemStorage for dialogue state
-   - Injects TorrentApi as dependency for handlers
+   - Injects TorrentApi and FileServerApi as dependencies for handlers
 
-2. **Message Routing** (crates/telegram/src/telegram.rs:10-44):
+2. **Message Routing** (crates/telegram/src/telegram.rs:17-59):
    - Uses dptree for declarative message routing
    - Routes based on Command enum and dialogue State
+   - Callback routing handles inline keyboard button presses
    - All routes properly wired to handler functions
    - Invalid messages routed to `invalid_state` handler
 
@@ -226,6 +245,18 @@ All handlers follow this structure:
 - `set_*_priority` - Priority management
 - `get/set_*_limit` - Speed limit management
 - `get_categories/get_tags` - Metadata retrieval
+- `get_torrent_files(&str)` - Get files in a torrent for streaming
+- `toggle_sequential_download(&str)` - Enable sequential mode for streaming
+- `get_default_save_path()` - Get download path for file server
+
+### FileServerApi Interface
+
+**Core Methods** (crates/fileserver/src/lib.rs):
+- `new(download_path, secret, base_url)` - Create file server instance
+- `serve(&host, port)` - Start HTTP server (runs in background)
+- `register_stream(token, stream_info)` - Register file for streaming
+- `generate_token(hash, file_index)` - Create secure access token
+- `cleanup_old_streams(max_age_hours)` - Remove expired stream registrations
 
 ## Testing Notes
 
@@ -241,6 +272,37 @@ The release build (crates/chatqbit/Cargo.toml:18-23) is optimized for size and p
 - `lto = true`: Link-time optimization
 - `codegen-units = 1`: Single codegen unit for better optimization
 - `strip = true`: Strip symbols from binary
+
+## Docker Deployment
+
+### Using Local qBittorrent
+
+```bash
+# Build and run
+docker compose up -d
+
+# View logs
+docker compose logs -f chatqbit
+```
+
+Configure `.env` to connect to your local qBittorrent:
+```env
+QBIT_HOST=http://host.docker.internal:8080
+QBIT_USERNAME=admin
+QBIT_PASSWORD=your_password
+TELOXIDE_TOKEN=your_bot_token
+FILE_SERVER_SECRET=change_me_in_production
+FILE_SERVER_BASE_URL=http://your-server:8081
+```
+
+### Using Dockerized qBittorrent
+
+Uncomment the `qbittorrent` service in `docker-compose.yml`, then:
+```bash
+docker compose up -d
+```
+
+Use `QBIT_HOST=http://qbittorrent:8080` in `.env` when running both in Docker.
 
 ## Quick Start: Streaming Torrents
 
@@ -266,3 +328,22 @@ The release build (crates/chatqbit/Cargo.toml:18-23) is optimized for size and p
    - **Works from anywhere with tunnel enabled!**
 
 For detailed tunnel setup, see [TUNNEL.md](./TUNNEL.md)
+
+## Streaming Architecture
+
+The streaming feature allows users to play torrent files directly in video players without waiting for complete download:
+
+1. **Sequential Download Mode**: Downloads pieces in order for streaming
+2. **HTTP File Server**: Serves files with range request support for seeking
+3. **Secure Token System**: SHA-256 based tokens for access control
+
+**Flow:**
+```
+User -> /stream <hash> -> Bot generates secure URLs
+User clicks URL -> FileServer verifies token -> Streams file with range support
+```
+
+**Security Considerations:**
+- Change `FILE_SERVER_SECRET` from default value in production
+- Use HTTPS reverse proxy for public deployment
+- Consider IP whitelisting for additional security

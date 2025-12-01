@@ -1,0 +1,50 @@
+services:
+  chatqbit:
+    build: .
+    container_name: chatqbit
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - FILE_SERVER_HOST=0.0.0.0
+      - FILE_SERVER_PORT=8081
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${FILE_SERVER_PORT:-8081}:8081"
+    networks:
+      - chatqbit_net
+
+  # Optional: Uncomment to run qBittorrent in Docker instead of local install
+  # qbittorrent:
+  #   image: lscr.io/linuxserver/qbittorrent:latest
+  #   container_name: qbittorrent
+  #   restart: unless-stopped
+  #   environment:
+  #     - PUID=1000
+  #     - PGID=1000
+  #     - TZ=UTC
+  #     - WEBUI_PORT=8080
+  #   volumes:
+  #     - qbittorrent_config:/config
+  #     - ${DOWNLOAD_PATH:-./downloads}:/downloads
+  #   ports:
+  #     - "8080:8080"
+  #     - "6881:6881"
+  #     - "6881:6881/udp"
+  #   networks:
+  #     - chatqbit_net
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 30s
+
+networks:
+  chatqbit_net:
+    driver: bridge
+
+# volumes:
+#   qbittorrent_config:
