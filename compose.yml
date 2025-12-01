@@ -15,8 +15,8 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       # Mount your qBittorrent downloads folder
-      # Windows: D:\Torrents -> Container: /downloads
-      - ${DOWNLOAD_PATH:-D:\Torrents}:/downloads:ro
+      # Set DOWNLOAD_PATH in .env to your qBittorrent save path
+      - ${DOWNLOAD_PATH}:/downloads:ro
     ports:
       - "${FILE_SERVER_PORT:-8081}:8081"
     networks:
