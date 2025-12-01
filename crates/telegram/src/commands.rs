@@ -15,16 +15,14 @@ use torrent::TorrentApi;
 
 /// Welcome message when user starts the bot
 pub async fn start(bot: Bot, msg: Message) -> HandlerResult {
-    let welcome_text = format!(
-        "👋 Welcome to ChatQBit!\n\n\
+    let welcome_text = "👋 Welcome to ChatQBit!\n\n\
         I'm your personal qBittorrent remote control bot.\n\n\
         🎯 Quick Actions:\n\
         • /menu - Interactive menu\n\
         • /list - View all torrents\n\
         • /magnet - Add new torrent\n\
         • /help - See all commands\n\n\
-        Let's get started! Try /menu for an interactive experience."
-    );
+        Let's get started! Try /menu for an interactive experience.".to_string();
 
     bot.send_message(msg.chat.id, welcome_text)
         .reply_markup(crate::keyboards::main_menu_keyboard())
@@ -741,7 +739,7 @@ pub async fn stream(
         // Construct full file path
         // Note: save_path is already absolute (e.g., /home/user/Downloads/)
         // filename includes relative path within torrent (e.g., "Folder/video.mkv")
-        let save_path_str = save_path.as_ref().map(|s| s.as_str()).unwrap_or(".");
+        let save_path_str = save_path.as_deref().unwrap_or(".");
         let file_path = std::path::PathBuf::from(save_path_str).join(filename);
 
         tracing::debug!("Registering stream - save_path: {:?}, filename: {}, full_path: {}",
@@ -758,11 +756,11 @@ pub async fn stream(
         file_server.state().register_stream(token.clone(), stream_info);
 
         // Generate URL
-        let stream_url = format!("{}/stream/{}/{}", file_server.base_url(), token, urlencoding::encode(&filename));
+        let stream_url = format!("{}/stream/{}/{}", file_server.base_url(), token, urlencoding::encode(filename));
 
         // Escape filename and size for MarkdownV2
         let escaped_filename = utils::escape_markdown_v2(filename);
-        let escaped_size = utils::escape_markdown_v2(&utils::format_size(file_size as u64));
+        let escaped_size = utils::escape_markdown_v2(&utils::format_size(file_size));
 
         response.push_str(&format!(
             "📄 *{}*\n   Size: {}\n   🔗 [Click to Stream]({})\n   📋 `{}`\n\n",
@@ -826,7 +824,7 @@ pub async fn files(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult
             "{}. {}\n   Size: {} | Progress: {:.1}%\n\n",
             index + 1,
             filename,
-            utils::format_size(size as u64),
+            utils::format_size(size),
             progress
         ));
     }

@@ -8,6 +8,7 @@ default_job = "run"
 
 [jobs.run]
 command = ["cargo", "run", "--bin", "chatqbit"]
+env.RUST_LOG = "debug"
 need_stdout = true
 
 [output]

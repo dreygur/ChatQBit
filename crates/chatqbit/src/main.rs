@@ -91,8 +91,16 @@ async fn main() {
         .unwrap_or(8081);
     let mut file_server_base_url = std::env::var("FILE_SERVER_BASE_URL")
         .unwrap_or_else(|_| format!("http://localhost:{}", file_server_port));
-    let file_server_secret = std::env::var("FILE_SERVER_SECRET")
-        .unwrap_or_else(|_| "change_me_in_production".to_string());
+    let file_server_secret = std::env::var("FILE_SERVER_SECRET").unwrap_or_else(|_| {
+        // Generate a random secret if not set
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        let random = RandomState::new().build_hasher().finish();
+        let secret = format!("auto_{:016x}", random);
+        tracing::warn!("⚠️  FILE_SERVER_SECRET not set, using auto-generated secret");
+        tracing::warn!("⚠️  Set FILE_SERVER_SECRET in .env for persistent streaming URLs");
+        secret
+    });
 
     info!("File server will listen on {}:{}", file_server_host, file_server_port);
 
@@ -103,24 +111,29 @@ async fn main() {
         .unwrap_or(fileserver::TunnelProvider::None);
 
     // Start tunnel if configured
+    // Store handle to keep tunnel alive (dropped on program exit)
+    let _tunnel_handle: Option<fileserver::TunnelHandle>;
     if tunnel_provider != fileserver::TunnelProvider::None {
         info!("🚇 Starting tunnel with provider: {:?}", tunnel_provider);
         match fileserver::start_tunnel(tunnel_provider, file_server_port).await {
-            Ok(tunnel_info) => {
+            Ok((tunnel_info, handle)) => {
                 info!("✅ Tunnel established successfully!");
                 info!("🌐 Public URL: {}", tunnel_info.public_url);
                 info!("📡 Provider: {}", tunnel_info.provider);
 
                 // Use tunnel URL as base URL
                 file_server_base_url = tunnel_info.public_url;
+                _tunnel_handle = Some(handle);
             }
             Err(e) => {
                 tracing::warn!("⚠️  Failed to start tunnel: {}", e);
                 tracing::warn!("Continuing with local URL: {}", file_server_base_url);
+                _tunnel_handle = None;
             }
         }
     } else {
         info!("No tunnel configured, using local URL: {}", file_server_base_url);
+        _tunnel_handle = None;
     }
 
     let file_server = fileserver::FileServerApi::new(

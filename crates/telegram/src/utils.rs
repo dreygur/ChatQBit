@@ -1,4 +1,4 @@
-/// Utility functions for formatting and parsing
+//! Utility functions for formatting and parsing
 
 /// Format file size in human-readable format
 pub fn format_bytes(bytes: i64) -> String {
@@ -49,17 +49,16 @@ pub fn format_limit(limit: u64) -> String {
 
 /// Format Unix timestamp to human-readable date
 pub fn format_timestamp(timestamp: i64) -> String {
-    if timestamp == 0 {
-        return "Never".to_string();
+    if timestamp <= 0 {
+        return "N/A".to_string();
     }
 
-    use std::time::{Duration, UNIX_EPOCH};
-    let duration = Duration::from_secs(timestamp as u64);
-    let _datetime = UNIX_EPOCH + duration;
-
-    // For simplicity, just return timestamp
-    // In production, use chrono crate for proper formatting
-    timestamp.to_string()
+    // Use chrono for proper formatting
+    use chrono::{TimeZone, Utc};
+    match Utc.timestamp_opt(timestamp, 0) {
+        chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        _ => "Invalid".to_string(),
+    }
 }
 
 /// Format ETA (seconds) to human-readable duration
@@ -106,7 +105,18 @@ pub fn extract_hash_arg<'a>(args: &'a [&str]) -> Result<&'a str, String> {
         return Err("Hash cannot be empty".to_string());
     }
 
+    // Validate hash format: 40 chars (SHA-1) or 64 chars (SHA-256), hex only
+    if !is_valid_torrent_hash(hash) {
+        return Err("Invalid hash format. Must be 40 or 64 hex characters".to_string());
+    }
+
     Ok(hash)
+}
+
+/// Check if a string is a valid torrent hash (SHA-1 or SHA-256)
+pub fn is_valid_torrent_hash(hash: &str) -> bool {
+    let len = hash.len();
+    (len == 40 || len == 64) && hash.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Validate and extract limit argument from command
@@ -176,13 +186,13 @@ fn find_matching_end(data: &[u8], start: usize) -> Option<usize> {
     }
 
     let mut depth = 0;
-    for i in start..data.len() {
-        match data[i] {
+    for (offset, &byte) in data[start..].iter().enumerate() {
+        match byte {
             b'd' | b'l' => depth += 1, // dictionary or list start
             b'e' => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some(i + 1); // Include the 'e'
+                    return Some(start + offset + 1); // Include the 'e'
                 }
             }
             _ => {}
@@ -228,7 +238,19 @@ mod tests {
     fn test_extract_hash_arg() {
         assert!(extract_hash_arg(&["cmd"]).is_err());
         assert!(extract_hash_arg(&["cmd", ""]).is_err());
-        assert_eq!(extract_hash_arg(&["cmd", "abc123"]).unwrap(), "abc123");
+        assert!(extract_hash_arg(&["cmd", "abc123"]).is_err()); // Invalid: too short
+        // Valid SHA-1 hash (40 hex chars)
+        let valid_sha1 = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+        assert_eq!(extract_hash_arg(&["cmd", valid_sha1]).unwrap(), valid_sha1);
+    }
+
+    #[test]
+    fn test_is_valid_torrent_hash() {
+        assert!(!is_valid_torrent_hash("")); // Empty
+        assert!(!is_valid_torrent_hash("abc123")); // Too short
+        assert!(!is_valid_torrent_hash("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")); // Invalid chars
+        assert!(is_valid_torrent_hash("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2")); // Valid SHA-1
+        assert!(is_valid_torrent_hash("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2")); // Valid SHA-256
     }
 
     #[test]

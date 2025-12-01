@@ -56,7 +56,7 @@ impl ServerState {
     /// * `token` - Unique token for this stream
     /// * `info` - Stream information
     pub fn register_stream(&self, token: String, info: StreamInfo) {
-        let mut streams = self.streams.write().unwrap();
+        let mut streams = self.streams.write().unwrap_or_else(|e| e.into_inner());
         streams.insert(token, info);
     }
 
@@ -68,7 +68,7 @@ impl ServerState {
     /// # Returns
     /// * `Some(StreamInfo)` if found, `None` otherwise
     pub fn get_stream(&self, token: &str) -> Option<StreamInfo> {
-        let streams = self.streams.read().unwrap();
+        let streams = self.streams.read().unwrap_or_else(|e| e.into_inner());
         streams.get(token).cloned()
     }
 
@@ -77,7 +77,7 @@ impl ServerState {
     /// # Arguments
     /// * `token` - Stream token to remove
     pub fn unregister_stream(&self, token: &str) {
-        let mut streams = self.streams.write().unwrap();
+        let mut streams = self.streams.write().unwrap_or_else(|e| e.into_inner());
         streams.remove(token);
     }
 
@@ -93,7 +93,7 @@ impl ServerState {
 
     /// Get count of active streams
     pub fn stream_count(&self) -> usize {
-        let streams = self.streams.read().unwrap();
+        let streams = self.streams.read().unwrap_or_else(|e| e.into_inner());
         streams.len()
     }
 
@@ -105,7 +105,7 @@ impl ServerState {
     /// # Returns
     /// * Number of streams cleaned up
     pub fn cleanup_old_streams(&self, max_age_hours: i64) -> usize {
-        let mut streams = self.streams.write().unwrap();
+        let mut streams = self.streams.write().unwrap_or_else(|e| e.into_inner());
         let now = Utc::now();
         let initial_count = streams.len();
 

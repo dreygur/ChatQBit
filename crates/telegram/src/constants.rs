@@ -1,4 +1,4 @@
-/// Constants used throughout the telegram bot
+//! Constants used throughout the telegram bot
 
 /// Default hash truncation length for display
 pub const HASH_DISPLAY_LENGTH: usize = 8;

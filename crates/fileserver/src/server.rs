@@ -69,6 +69,19 @@ impl FileServerApi {
 
         tracing::info!("File server listening on {}", addr);
 
+        // Spawn background task to clean up old streams every hour
+        let cleanup_state = self.state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                let cleaned = cleanup_state.cleanup_old_streams(24); // Remove streams older than 24 hours
+                if cleaned > 0 {
+                    tracing::info!("Cleaned up {} expired streams", cleaned);
+                }
+            }
+        });
+
         axum::serve(listener, self.router()).await?;
 
         Ok(())
