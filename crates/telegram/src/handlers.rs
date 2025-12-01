@@ -135,18 +135,56 @@ pub fn format_transfer_info(info: &qbit_rs::model::TransferInfo) -> String {
     )
 }
 
-/// Macro to reduce boilerplate in hash-based commands
-#[macro_export]
-macro_rules! hash_command {
-    ($bot:expr, $msg:expr, $torrent:expr, $usage:expr, $success:expr, $method:ident) => {{
-        execute_hash_command(
-            $bot,
-            $msg,
-            $torrent,
-            $usage,
-            $success,
-            |api, hash| async move { api.$method(&hash).await },
-        )
-        .await
-    }};
+/// Check for duplicate torrents before adding
+///
+/// Returns `Some(message)` if duplicates are found, `None` otherwise
+pub async fn check_for_duplicates(
+    torrent: &TorrentApi,
+    urls: &[String],
+) -> Option<String> {
+    if !crate::constants::ENABLE_DUPLICATE_CHECK {
+        return None;
+    }
+
+    match torrent.check_duplicates(urls).await {
+        Ok(torrent::DuplicateCheckResult::Duplicates(hashes)) => {
+            let hash_list = hashes
+                .iter()
+                .map(|h| utils::truncate_hash(h, 8))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            Some(format!(
+                "⚠️ Duplicate torrent detected!\n\n\
+                This torrent is already in your download queue:\n\
+                Hash: {}\n\n\
+                Torrent was not added to avoid duplicates.",
+                hash_list
+            ))
+        }
+        Ok(torrent::DuplicateCheckResult::NoDuplicates) => {
+            tracing::debug!("No duplicates found, proceeding to add torrent");
+            None
+        }
+        Err(err) => {
+            // Log error but continue with adding (fail-open behavior)
+            tracing::warn!("Duplicate check failed, proceeding anyway: {}", err);
+            None
+        }
+    }
+}
+
+/// Enable sequential download mode for better streaming
+///
+/// This enables sequential piece download and first/last piece priority.
+pub async fn enable_sequential_mode(torrent: &TorrentApi, hash: &str) {
+    tracing::info!("Enabling sequential download and first/last piece priority for torrent: {}", hash);
+
+    if let Err(err) = torrent.toggle_sequential_download(hash).await {
+        tracing::warn!("Failed to enable sequential download: {}", err);
+    }
+
+    if let Err(err) = torrent.toggle_first_last_piece_priority(hash).await {
+        tracing::warn!("Failed to enable first/last piece priority: {}", err);
+    }
 }

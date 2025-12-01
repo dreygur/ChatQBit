@@ -3,9 +3,10 @@
 //! This module handles all callback queries from inline keyboards,
 //! providing interactive responses to button presses.
 
-use crate::constants::emoji;
+use crate::constants::{emoji, MAX_CALLBACK_DATA_LEN, TORRENTS_PER_PAGE};
 use crate::handlers;
 use crate::keyboards;
+use crate::rate_limit;
 use crate::types::HandlerResult;
 use crate::utils;
 use teloxide::prelude::*;
@@ -25,6 +26,18 @@ pub async fn handle_callback(
         None => return Ok(()),
     };
 
+    // Validate callback data length to prevent abuse
+    if data.len() > MAX_CALLBACK_DATA_LEN {
+        tracing::warn!("Callback data too long: {} bytes", data.len());
+        return Ok(());
+    }
+
+    // Rate limiting check
+    if !rate_limit::check_rate_limit(q.from.id.0) {
+        tracing::debug!("Rate limited user: {}", q.from.id);
+        return Ok(());
+    }
+
     let message = match q.message {
         Some(msg) => msg,
         None => return Ok(()),
@@ -34,9 +47,16 @@ pub async fn handle_callback(
     let parts: Vec<&str> = data.split(':').collect();
 
     match parts.as_slice() {
+        // Pagination callbacks
+        ["page", page_str] => {
+            if let Ok(page) = page_str.parse::<usize>() {
+                handle_list_page_callback(bot, message, torrent, page).await?;
+            }
+        }
+
         // Command callbacks (main menu actions)
         ["cmd", "list"] => {
-            handle_list_callback(bot, message, torrent).await?;
+            handle_list_page_callback(bot, message, torrent, 0).await?;
         }
         ["cmd", "magnet"] => {
             bot.send_message(message.chat.id, "Please send me a magnet link or torrent URL.")
@@ -234,8 +254,13 @@ async fn execute_torrent_action(
     Ok(())
 }
 
-/// Handle list callback
-async fn handle_list_callback(bot: Bot, message: Message, torrent: TorrentApi) -> HandlerResult {
+/// Handle paginated list callback
+async fn handle_list_page_callback(
+    bot: Bot,
+    message: Message,
+    torrent: TorrentApi,
+    page: usize,
+) -> HandlerResult {
     let torrents = torrent.query().await.map_err(|e| {
         tracing::error!("Error fetching torrents: {}", e);
         e
@@ -246,12 +271,26 @@ async fn handle_list_callback(bot: Bot, message: Message, torrent: TorrentApi) -
         return Ok(());
     }
 
-    let mut response = format!("{} Current Torrents:\n\n", emoji::DOWNLOAD);
-    for t in torrents.iter().take(10) {
+    let total_pages = torrents.len().div_ceil(TORRENTS_PER_PAGE);
+    let page = page.min(total_pages.saturating_sub(1));
+    let start = page * TORRENTS_PER_PAGE;
+    let end = (start + TORRENTS_PER_PAGE).min(torrents.len());
+
+    let mut response = format!(
+        "{} Torrents ({}-{} of {}):\n\n",
+        emoji::DOWNLOAD,
+        start + 1,
+        end,
+        torrents.len()
+    );
+
+    for t in torrents.iter().skip(start).take(TORRENTS_PER_PAGE) {
         response.push_str(&handlers::format_torrent_item(t));
     }
 
-    bot.send_message(message.chat.id, response).await?;
+    bot.send_message(message.chat.id, response)
+        .reply_markup(keyboards::pagination_keyboard(page, total_pages))
+        .await?;
     Ok(())
 }
 

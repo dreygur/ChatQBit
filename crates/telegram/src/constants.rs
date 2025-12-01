@@ -3,12 +3,30 @@
 /// Default hash truncation length for display
 pub const HASH_DISPLAY_LENGTH: usize = 8;
 
-/// Maximum number of torrents to display in list command
+/// Maximum number of torrents to display per page
+pub const TORRENTS_PER_PAGE: usize = 10;
+
+/// Maximum number of torrents to display in list command (legacy)
 pub const MAX_TORRENTS_DISPLAY: usize = 50;
 
 /// Enable duplicate torrent detection
 /// Set to false to disable duplicate checking and allow re-adding torrents
 pub const ENABLE_DUPLICATE_CHECK: bool = true;
+
+/// Maximum torrent file upload size (10 MB)
+pub const MAX_TORRENT_FILE_SIZE: u32 = 10 * 1024 * 1024;
+
+/// Maximum callback data length to prevent abuse
+pub const MAX_CALLBACK_DATA_LEN: usize = 64;
+
+/// Minimum file size for streaming (skip smaller files like samples)
+pub const MIN_STREAM_FILE_SIZE: u64 = 1_000_000;
+
+/// Stream token expiration time in hours
+pub const STREAM_TOKEN_EXPIRY_HOURS: i64 = 24;
+
+/// Rate limit: minimum seconds between commands per user
+pub const RATE_LIMIT_SECONDS: u64 = 1;
 
 /// Emoji constants for consistent UI
 pub mod emoji {

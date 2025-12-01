@@ -18,6 +18,9 @@ use tower_http::trace::TraceLayer;
 use crate::state::ServerState;
 use crate::token::verify_stream_token;
 
+/// Stream token expiration time in hours
+const STREAM_TOKEN_EXPIRY_HOURS: i64 = 24;
+
 /// File server API for managing the HTTP server
 #[derive(Clone)]
 pub struct FileServerApi {
@@ -103,9 +106,9 @@ async fn stream_file(
     Path((token, _filename)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    // Get stream info from state
+    // Get stream info from state (with expiration check)
     let stream_info = state
-        .get_stream(&token)
+        .get_stream_if_valid(&token, STREAM_TOKEN_EXPIRY_HOURS)
         .ok_or_else(|| AppError::NotFound("Stream not found or expired".to_string()))?;
 
     // Verify token

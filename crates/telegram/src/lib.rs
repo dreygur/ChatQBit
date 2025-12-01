@@ -4,6 +4,7 @@ pub mod constants;
 pub mod error;
 pub mod handlers;
 pub mod keyboards;
+pub mod rate_limit;
 pub mod telegram;
 pub mod types;
 pub mod utils;

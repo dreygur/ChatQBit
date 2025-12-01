@@ -6,7 +6,7 @@
 //! 2. Execute the operation via TorrentApi
 //! 3. Format and send the response
 
-use crate::constants::{emoji, usage, MAX_TORRENTS_DISPLAY};
+use crate::constants::{emoji, usage, TORRENTS_PER_PAGE, MAX_TORRENT_FILE_SIZE, MIN_STREAM_FILE_SIZE};
 use crate::handlers::{self, execute_hash_command};
 use crate::types::{Command, HandlerResult, MyDialogue, State};
 use crate::utils;
@@ -87,53 +87,19 @@ pub async fn magnet(
     // Extract info hash from magnet link for duplicate checking and sequential mode
     let info_hash = extract_hash_from_magnet(text);
 
-    // Check for duplicates if enabled
-    if crate::constants::ENABLE_DUPLICATE_CHECK {
-        match torrent.check_duplicates(&urls).await {
-            Ok(torrent::DuplicateCheckResult::Duplicates(hashes)) => {
-                let hash_list = hashes
-                    .iter()
-                    .map(|h| utils::truncate_hash(h, 8))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-
-                let message = format!(
-                    "⚠️ Duplicate torrent detected!\n\n\
-                    This torrent is already in your download queue:\n\
-                    Hash: {}\n\n\
-                    Torrent was not added to avoid duplicates.",
-                    hash_list
-                );
-
-                bot.send_message(msg.chat.id, message).await?;
-                dialogue.exit().await?;
-                return Ok(());
-            }
-            Ok(torrent::DuplicateCheckResult::NoDuplicates) => {
-                // Continue to add torrent
-                tracing::debug!("No duplicates found, proceeding to add torrent");
-            }
-            Err(err) => {
-                // Log error but continue with adding (fail-open behavior)
-                tracing::warn!("Duplicate check failed, proceeding anyway: {}", err);
-            }
-        }
+    // Check for duplicates
+    if let Some(duplicate_msg) = handlers::check_for_duplicates(&torrent, &urls).await {
+        bot.send_message(msg.chat.id, duplicate_msg).await?;
+        dialogue.exit().await?;
+        return Ok(());
     }
 
     // Add the torrent
     match torrent.magnet(&urls).await {
         Ok(_) => {
-            // Enable sequential download and first/last piece priority by default
-            if let Some(hash) = info_hash {
-                tracing::info!("Enabling sequential download and first/last piece priority for torrent: {}", hash);
-
-                if let Err(err) = torrent.toggle_sequential_download(&hash).await {
-                    tracing::warn!("Failed to enable sequential download: {}", err);
-                }
-
-                if let Err(err) = torrent.toggle_first_last_piece_priority(&hash).await {
-                    tracing::warn!("Failed to enable first/last piece priority: {}", err);
-                }
+            // Enable sequential download mode
+            if let Some(ref hash) = info_hash {
+                handlers::enable_sequential_mode(&torrent, hash).await;
             } else {
                 tracing::warn!("Could not extract info hash from magnet link, skipping sequential mode setup");
             }
@@ -176,6 +142,21 @@ async fn handle_torrent_file(
             format!(
                 "{} Invalid file type. Please send a .torrent file.\n\nReceived: {}",
                 emoji::ERROR, filename
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // Validate file size to prevent memory exhaustion
+    if document.file.size > MAX_TORRENT_FILE_SIZE {
+        bot.send_message(
+            msg.chat.id,
+            format!(
+                "{} File too large. Maximum size is {} MB.\n\nReceived: {} bytes",
+                emoji::ERROR,
+                MAX_TORRENT_FILE_SIZE / (1024 * 1024),
+                document.file.size
             ),
         )
         .await?;
@@ -237,60 +218,27 @@ async fn handle_torrent_file(
     // Extract info hash from torrent file for duplicate checking and sequential mode
     let info_hash = utils::extract_torrent_info_hash(&file_data);
 
-    // Check for duplicates if enabled
-    if crate::constants::ENABLE_DUPLICATE_CHECK {
-        if let Some(ref hash) = info_hash {
-            tracing::debug!("Extracted info hash from torrent file: {}", hash);
+    // Check for duplicates
+    if let Some(ref hash) = info_hash {
+        tracing::debug!("Extracted info hash from torrent file: {}", hash);
+        let dummy_magnet = format!("magnet:?xt=urn:btih:{}", hash);
+        let urls = [dummy_magnet];
 
-            let dummy_magnet = format!("magnet:?xt=urn:btih:{}", hash);
-            let urls = [dummy_magnet];
-
-            match torrent.check_duplicates(&urls).await {
-                Ok(torrent::DuplicateCheckResult::Duplicates(hashes)) => {
-                    let hash_list = hashes
-                        .iter()
-                        .map(|h| utils::truncate_hash(h, 8))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-
-                    let message = format!(
-                        "⚠️ Duplicate torrent detected!\n\n\
-                        This torrent is already in your download queue:\n\
-                        Hash: {}\n\n\
-                        Torrent was not added to avoid duplicates.",
-                        hash_list
-                    );
-
-                    bot.send_message(msg.chat.id, message).await?;
-                    dialogue.exit().await?;
-                    return Ok(());
-                }
-                Ok(torrent::DuplicateCheckResult::NoDuplicates) => {
-                    tracing::debug!("No duplicates found, proceeding to add torrent file");
-                }
-                Err(err) => {
-                    tracing::warn!("Duplicate check failed for torrent file, proceeding anyway: {}", err);
-                }
-            }
-        } else {
-            tracing::warn!("Could not extract info hash from torrent file for duplicate checking");
+        if let Some(duplicate_msg) = handlers::check_for_duplicates(&torrent, &urls).await {
+            bot.send_message(msg.chat.id, duplicate_msg).await?;
+            dialogue.exit().await?;
+            return Ok(());
         }
+    } else {
+        tracing::warn!("Could not extract info hash from torrent file for duplicate checking");
     }
 
     // Add the torrent file
     match torrent.add_torrent_file(filename, file_data).await {
         Ok(_) => {
-            // Enable sequential download and first/last piece priority by default
-            if let Some(hash) = info_hash {
-                tracing::info!("Enabling sequential download and first/last piece priority for torrent: {}", hash);
-
-                if let Err(err) = torrent.toggle_sequential_download(&hash).await {
-                    tracing::warn!("Failed to enable sequential download: {}", err);
-                }
-
-                if let Err(err) = torrent.toggle_first_last_piece_priority(&hash).await {
-                    tracing::warn!("Failed to enable first/last piece priority: {}", err);
-                }
+            // Enable sequential download mode
+            if let Some(ref hash) = info_hash {
+                handlers::enable_sequential_mode(&torrent, hash).await;
             } else {
                 tracing::warn!("Could not extract info hash from torrent file, skipping sequential mode setup");
             }
@@ -317,7 +265,7 @@ async fn handle_torrent_file(
     Ok(())
 }
 
-/// List all torrents with status and progress
+/// List all torrents with status and progress (paginated)
 pub async fn list(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult {
     let torrents = match torrent.query().await {
         Ok(t) => t,
@@ -334,22 +282,25 @@ pub async fn list(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerResult 
         return Ok(());
     }
 
-    let mut response = format!("{} Current Torrents:\n\n", emoji::DOWNLOAD);
-    for torrent in torrents.iter().take(MAX_TORRENTS_DISPLAY) {
-        response.push_str(&handlers::format_torrent_item(torrent));
+    let total_pages = torrents.len().div_ceil(TORRENTS_PER_PAGE);
+    let end = TORRENTS_PER_PAGE.min(torrents.len());
+
+    let mut response = format!(
+        "{} Torrents (1-{} of {}):\n\n",
+        emoji::DOWNLOAD,
+        end,
+        torrents.len()
+    );
+
+    for t in torrents.iter().take(TORRENTS_PER_PAGE) {
+        response.push_str(&handlers::format_torrent_item(t));
     }
 
-    if torrents.len() > MAX_TORRENTS_DISPLAY {
-        response.push_str(&format!(
-            "\n...and {} more torrents",
-            torrents.len() - MAX_TORRENTS_DISPLAY
-        ));
-    }
-
-    // Add helpful tip about using hashes
     response.push_str("\n💡 Tip: Tap the hash (monospace text) to copy it for use in commands.");
 
-    bot.send_message(msg.chat.id, response).await?;
+    bot.send_message(msg.chat.id, response)
+        .reply_markup(crate::keyboards::pagination_keyboard(0, total_pages))
+        .await?;
     Ok(())
 }
 
@@ -729,7 +680,7 @@ pub async fn stream(
 
         // Skip small files (likely metadata/samples)
         let file_size = file.size;
-        if file_size < 1_000_000 {  // Skip files smaller than 1MB
+        if file_size < MIN_STREAM_FILE_SIZE {
             continue;
         }
 

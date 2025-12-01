@@ -1,7 +1,7 @@
 //! qBittorrent API wrapper implementation
 
 use qbit_rs::{model::{AddTorrentArg, Credential, Sep, Torrent}, Error, Qbit};
-use std::{sync::Arc};
+use std::sync::Arc;
 
 /// Thread-safe wrapper around the qBittorrent API client
 ///
@@ -28,6 +28,13 @@ use std::{sync::Arc};
 pub struct TorrentApi {
     /// The underlying qBittorrent client, wrapped in Arc for thread-safety
     pub client: Arc<Qbit>,
+    /// HTTP client for fallback API calls (qBittorrent < 5.0 compatibility)
+    http_client: reqwest::Client,
+    /// Base endpoint URL
+    endpoint: String,
+    /// Credentials for fallback authentication
+    username: String,
+    password: String,
 }
 
 impl Default for TorrentApi {
@@ -46,9 +53,13 @@ impl TorrentApi {
             .expect("QBIT_HOST must be set in .env file, e.g., http://localhost:8080");
         let username = std::env::var("QBIT_USERNAME").expect("QBIT_USERNAME must be set in .env file");
         let password = std::env::var("QBIT_PASSWORD").expect("QBIT_PASSWORD must be set in .env file");
-        let credential = Credential::new(username, password);
+        let credential = Credential::new(username.clone(), password.clone());
         let client = Arc::new(Qbit::new(endpoint.as_str(), credential));
-        TorrentApi { client }
+        let http_client = reqwest::Client::builder()
+            .cookie_store(true)
+            .build()
+            .expect("Failed to create HTTP client");
+        TorrentApi { client, http_client, endpoint, username, password }
     }
 
     /// Authenticate with the qBittorrent server
@@ -56,10 +67,21 @@ impl TorrentApi {
     /// # Errors
     /// Returns an error if authentication fails
     pub async fn login(&self) -> Result<(), Error> {
+        // Login with the main qbit-rs client
         self.client.login(false).await.map_err(|e| {
             tracing::error!("Failed to login to qBittorrent: {}", e);
             e
-        })
+        })?;
+
+        // Also login with the fallback http_client for v4.x API compatibility
+        let login_url = format!("{}/api/v2/auth/login", self.endpoint);
+        let _ = self.http_client
+            .post(&login_url)
+            .form(&[("username", &self.username), ("password", &self.password)])
+            .send()
+            .await;
+
+        Ok(())
     }
 
     pub async fn query(&self) -> Result<Vec<Torrent>, Error> {
@@ -190,16 +212,70 @@ impl TorrentApi {
         self.client.get_torrent_properties(hash).await
     }
 
+    /// Resume/start torrents (compatible with qBittorrent v4.x and v5.x)
     pub async fn start_torrents(&self, hash: &str) -> Result<(), Error> {
-        tracing::info!("Starting torrents: {}", hash);
+        tracing::info!("Starting/resuming torrents: {}", hash);
         let hashes = vec![hash.to_string()];
-        self.client.start_torrents(hashes).await
+
+        // Try v5.0 API first (torrents/start)
+        match self.client.start_torrents(hashes).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Fallback to v4.x API (torrents/resume) if 404
+                tracing::debug!("start_torrents failed, trying resume fallback: {}", e);
+                self.legacy_resume_torrents(hash).await
+            }
+        }
     }
 
+    /// Stop/pause torrents (compatible with qBittorrent v4.x and v5.x)
     pub async fn stop_torrents(&self, hash: &str) -> Result<(), Error> {
-        tracing::info!("Stopping torrents: {}", hash);
+        tracing::info!("Stopping/pausing torrents: {}", hash);
         let hashes = vec![hash.to_string()];
-        self.client.stop_torrents(hashes).await
+
+        // Try v5.0 API first (torrents/stop)
+        match self.client.stop_torrents(hashes).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Fallback to v4.x API (torrents/pause) if 404
+                tracing::debug!("stop_torrents failed, trying pause fallback: {}", e);
+                self.legacy_pause_torrents(hash).await
+            }
+        }
+    }
+
+    /// Fallback for qBittorrent < 5.0: use torrents/resume endpoint
+    async fn legacy_resume_torrents(&self, hash: &str) -> Result<(), Error> {
+        let url = format!("{}/api/v2/torrents/resume", self.endpoint);
+        let resp = self.http_client
+            .post(&url)
+            .form(&[("hashes", hash)])
+            .send()
+            .await
+            .map_err(Error::HttpError)?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(Error::BadResponse { explain: "Resume failed" })
+        }
+    }
+
+    /// Fallback for qBittorrent < 5.0: use torrents/pause endpoint
+    async fn legacy_pause_torrents(&self, hash: &str) -> Result<(), Error> {
+        let url = format!("{}/api/v2/torrents/pause", self.endpoint);
+        let resp = self.http_client
+            .post(&url)
+            .form(&[("hashes", hash)])
+            .send()
+            .await
+            .map_err(Error::HttpError)?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(Error::BadResponse { explain: "Pause failed" })
+        }
     }
 
     pub async fn delete_torrents(&self, hash: &str, delete_files: bool) -> Result<(), Error> {

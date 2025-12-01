@@ -8,7 +8,6 @@ torrent = { path = "../torrent" }
 fileserver = { path = "../fileserver" }
 teloxide = { version = "0.12", features = ["macros"] }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 qbit-rs = { workspace = true }
 sha1 = "0.10"
 chrono = "0.4"

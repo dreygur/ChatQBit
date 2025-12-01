@@ -66,10 +66,31 @@ impl ServerState {
     /// * `token` - Stream token
     ///
     /// # Returns
-    /// * `Some(StreamInfo)` if found, `None` otherwise
+    /// * `Some(StreamInfo)` if found and not expired, `None` otherwise
     pub fn get_stream(&self, token: &str) -> Option<StreamInfo> {
         let streams = self.streams.read().unwrap_or_else(|e| e.into_inner());
         streams.get(token).cloned()
+    }
+
+    /// Get stream information by token with expiration check
+    ///
+    /// # Arguments
+    /// * `token` - Stream token
+    /// * `max_age_hours` - Maximum age in hours before considering expired
+    ///
+    /// # Returns
+    /// * `Some(StreamInfo)` if found and not expired, `None` otherwise
+    pub fn get_stream_if_valid(&self, token: &str, max_age_hours: i64) -> Option<StreamInfo> {
+        let streams = self.streams.read().unwrap_or_else(|e| e.into_inner());
+        streams.get(token).and_then(|info| {
+            let age = Utc::now().signed_duration_since(info.created_at);
+            if age.num_hours() < max_age_hours {
+                Some(info.clone())
+            } else {
+                tracing::debug!("Stream token expired: {} hours old", age.num_hours());
+                None
+            }
+        })
     }
 
     /// Remove a stream registration
