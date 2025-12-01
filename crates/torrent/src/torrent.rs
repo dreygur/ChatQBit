@@ -92,7 +92,7 @@ impl TorrentApi {
             tag: None,
             sort: None,
             reverse: None,
-            limit: Some(10),
+            limit: None,
             offset: None,
             hashes: None,
         };

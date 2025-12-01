@@ -26,8 +26,10 @@ pub struct StreamInfo {
 pub struct ServerState {
     /// Active streams mapped by token
     streams: Arc<RwLock<HashMap<String, StreamInfo>>>,
-    /// Base download path from qBittorrent
-    download_path: PathBuf,
+    /// Base download path reported by qBittorrent (may be remote/host path)
+    qbit_download_path: PathBuf,
+    /// Local download path accessible by this server (e.g., container mount point)
+    local_download_path: PathBuf,
     /// Secret for token generation
     secret: String,
     /// qBittorrent API client for querying file locations
@@ -38,15 +40,43 @@ impl ServerState {
     /// Create new server state
     ///
     /// # Arguments
-    /// * `download_path` - Base directory where qBittorrent saves files
+    /// * `qbit_download_path` - Base directory where qBittorrent reports saving files
+    /// * `local_download_path` - Local path where files are accessible (for Docker: mount point)
     /// * `secret` - Secret key for token generation
     /// * `torrent_api` - qBittorrent API client for querying file locations
-    pub fn new(download_path: PathBuf, secret: String, torrent_api: TorrentApi) -> Self {
+    pub fn new(qbit_download_path: PathBuf, local_download_path: PathBuf, secret: String, torrent_api: TorrentApi) -> Self {
         Self {
             streams: Arc::new(RwLock::new(HashMap::new())),
-            download_path,
+            qbit_download_path,
+            local_download_path,
             secret,
             torrent_api,
+        }
+    }
+
+    /// Map a qBittorrent file path to a local accessible path
+    ///
+    /// Replaces the qBittorrent base path with the local path and normalizes separators.
+    /// E.g., `D:\Torrents\Movie\file.mkv` -> `/downloads/Movie/file.mkv`
+    pub fn map_to_local_path(&self, qbit_path: &std::path::Path) -> PathBuf {
+        let qbit_base = self.qbit_download_path.to_string_lossy();
+        let path_str = qbit_path.to_string_lossy();
+
+        // Normalize both paths to forward slashes for comparison
+        let qbit_base_normalized = qbit_base.replace('\\', "/");
+        let path_normalized = path_str.replace('\\', "/");
+
+        // Try to strip the qBittorrent base path
+        if let Some(relative) = path_normalized.strip_prefix(&qbit_base_normalized) {
+            let relative = relative.trim_start_matches('/');
+            self.local_download_path.join(relative)
+        } else {
+            // Fallback: just use the filename
+            if let Some(filename) = qbit_path.file_name() {
+                self.local_download_path.join(filename)
+            } else {
+                qbit_path.to_path_buf()
+            }
         }
     }
 
@@ -102,9 +132,14 @@ impl ServerState {
         streams.remove(token);
     }
 
-    /// Get the download path
+    /// Get the local download path (accessible by this server)
     pub fn download_path(&self) -> &PathBuf {
-        &self.download_path
+        &self.local_download_path
+    }
+
+    /// Get the qBittorrent download path (as reported by qBittorrent)
+    pub fn qbit_download_path(&self) -> &PathBuf {
+        &self.qbit_download_path
     }
 
     /// Get the secret
@@ -181,14 +216,20 @@ impl ServerState {
             .get(file_index)
             .ok_or_else(|| format!("File index {} not found in torrent", file_index))?;
 
-        // Construct file path: save_path + file.name
+        // Construct qBittorrent file path: save_path + file.name
         let save_path = torrent_info.save_path.unwrap_or_else(|| ".".to_string());
-        let save_path_buf = PathBuf::from(save_path);
-        let file_path = save_path_buf.join(&file.name);
+        let qbit_file_path = PathBuf::from(&save_path).join(&file.name);
 
-        tracing::info!("Resolved file path from qBittorrent: {}", file_path.display());
+        // Map to local accessible path (handles Docker path mapping)
+        let local_path = self.map_to_local_path(&qbit_file_path);
 
-        Ok(file_path)
+        tracing::info!(
+            "Resolved file path: qBittorrent={} -> local={}",
+            qbit_file_path.display(),
+            local_path.display()
+        );
+
+        Ok(local_path)
     }
 }
 
@@ -200,7 +241,12 @@ mod tests {
     fn create_test_state() -> ServerState {
         dotenv::dotenv().ok();
         let torrent_api = TorrentApi::new();
-        ServerState::new(PathBuf::from("/downloads"), "secret".to_string(), torrent_api)
+        ServerState::new(
+            PathBuf::from("/downloads"),
+            PathBuf::from("/downloads"),
+            "secret".to_string(),
+            torrent_api,
+        )
     }
 
     fn create_test_stream_info(hash: &str, filename: &str) -> StreamInfo {
@@ -346,16 +392,49 @@ mod tests {
     fn test_download_path() {
         dotenv::dotenv().ok();
         let torrent_api = TorrentApi::new();
-        let state = ServerState::new(PathBuf::from("/custom/path"), "secret".to_string(), torrent_api);
-        assert_eq!(state.download_path(), &PathBuf::from("/custom/path"));
+        let state = ServerState::new(
+            PathBuf::from("/qbit/path"),
+            PathBuf::from("/local/path"),
+            "secret".to_string(),
+            torrent_api,
+        );
+        assert_eq!(state.download_path(), &PathBuf::from("/local/path"));
+        assert_eq!(state.qbit_download_path(), &PathBuf::from("/qbit/path"));
     }
 
     #[test]
     fn test_secret() {
         dotenv::dotenv().ok();
         let torrent_api = TorrentApi::new();
-        let state = ServerState::new(PathBuf::from("/downloads"), "my_secret".to_string(), torrent_api);
+        let state = ServerState::new(
+            PathBuf::from("/downloads"),
+            PathBuf::from("/downloads"),
+            "my_secret".to_string(),
+            torrent_api,
+        );
         assert_eq!(state.secret(), "my_secret");
+    }
+
+    #[test]
+    fn test_path_mapping() {
+        dotenv::dotenv().ok();
+        let torrent_api = TorrentApi::new();
+        let state = ServerState::new(
+            PathBuf::from("D:\\Torrents"),
+            PathBuf::from("/downloads"),
+            "secret".to_string(),
+            torrent_api,
+        );
+
+        // Test Windows path to Linux path mapping
+        let qbit_path = PathBuf::from("D:\\Torrents/Movie/file.mkv");
+        let local_path = state.map_to_local_path(&qbit_path);
+        assert_eq!(local_path, PathBuf::from("/downloads/Movie/file.mkv"));
+
+        // Test with forward slashes
+        let qbit_path2 = PathBuf::from("D:/Torrents/Movie/file.mkv");
+        let local_path2 = state.map_to_local_path(&qbit_path2);
+        assert_eq!(local_path2, PathBuf::from("/downloads/Movie/file.mkv"));
     }
 
     #[test]

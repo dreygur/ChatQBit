@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.91-alpine AS builder
+FROM public.ecr.aws/docker/library/rust:1.91-alpine AS builder
 
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
 

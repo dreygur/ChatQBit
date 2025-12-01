@@ -71,17 +71,24 @@ async fn main() {
     info!("Bot started successfully!");
     info!("qBittorrent client authenticated");
 
-    // Get qBittorrent download path
-    let download_path = match client.get_default_save_path().await {
+    // Get qBittorrent download path (as reported by qBittorrent)
+    let qbit_download_path = match client.get_default_save_path().await {
         Ok(path) => {
             info!("qBittorrent download path: {}", path.display());
             path
         }
         Err(e) => {
-            tracing::warn!("Failed to get qBittorrent download path, using default: {}", e);
-            PathBuf::from(std::env::var("QBIT_DOWNLOAD_PATH").unwrap_or_else(|_| "/downloads".to_string()))
+            tracing::warn!("Failed to get qBittorrent download path: {}", e);
+            PathBuf::from("/downloads")
         }
     };
+
+    // Get local download path (where files are accessible by this server)
+    // In Docker, this is the mount point; otherwise same as qBittorrent path
+    let local_download_path = PathBuf::from(
+        std::env::var("QBIT_DOWNLOAD_PATH").unwrap_or_else(|_| qbit_download_path.to_string_lossy().to_string())
+    );
+    info!("Local download path: {}", local_download_path.display());
 
     // Initialize file server
     let file_server_host = std::env::var("FILE_SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -137,7 +144,8 @@ async fn main() {
     }
 
     let file_server = fileserver::FileServerApi::new(
-        download_path,
+        qbit_download_path,
+        local_download_path,
         file_server_secret,
         file_server_base_url,
         client.clone(),

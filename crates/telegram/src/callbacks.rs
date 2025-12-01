@@ -525,9 +525,10 @@ async fn handle_stream_callback(
         // Generate streaming token
         let token = fileserver::generate_stream_token(hash, index, file_server.state().secret());
 
-        // Construct file path
+        // Construct qBittorrent file path and map to local accessible path
         let save_path_str = save_path.as_deref().unwrap_or(".");
-        let file_path = std::path::PathBuf::from(save_path_str).join(filename);
+        let qbit_path = std::path::PathBuf::from(save_path_str).join(filename);
+        let file_path = file_server.state().map_to_local_path(&qbit_path);
 
         // Register stream
         let stream_info = fileserver::StreamInfo {

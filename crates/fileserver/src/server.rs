@@ -32,12 +32,13 @@ impl FileServerApi {
     /// Create a new file server API
     ///
     /// # Arguments
-    /// * `download_path` - Base directory where qBittorrent saves files
+    /// * `qbit_download_path` - Base directory where qBittorrent reports saving files
+    /// * `local_download_path` - Local path where files are accessible (for Docker: mount point)
     /// * `secret` - Secret key for token generation
     /// * `base_url` - Base URL for generating stream links (e.g., http://localhost:8081)
     /// * `torrent_api` - qBittorrent API client for querying file locations
-    pub fn new(download_path: PathBuf, secret: String, base_url: String, torrent_api: torrent::TorrentApi) -> Self {
-        let state = ServerState::new(download_path, secret, torrent_api);
+    pub fn new(qbit_download_path: PathBuf, local_download_path: PathBuf, secret: String, base_url: String, torrent_api: torrent::TorrentApi) -> Self {
+        let state = ServerState::new(qbit_download_path, local_download_path, secret, torrent_api);
         Self { state, base_url }
     }
 
