@@ -11,8 +11,10 @@ use torrent::TorrentApi;
 
 /// Execute a torrent operation with a hash argument
 ///
+/// If no hash is provided, shows a torrent selection list.
 /// This helper handles:
 /// - Argument parsing and validation
+/// - Showing torrent list if no argument
 /// - Operation execution
 /// - Success/error response formatting
 pub async fn execute_hash_command<F, Fut>(
@@ -31,10 +33,9 @@ where
 
     let hash = match utils::extract_hash_arg(&args) {
         Ok(h) => h.to_string(),
-        Err(e) => {
-            bot.send_message(msg.chat.id, format!("{} {}\n{}", emoji::ERROR, e, usage_msg))
-                .await?;
-            return Ok(());
+        Err(_) => {
+            // No hash provided - show torrent selection list
+            return show_torrent_selection(bot, msg, torrent, usage_msg).await;
         }
     };
 
@@ -51,6 +52,65 @@ where
     }
 
     Ok(())
+}
+
+/// Show torrent selection keyboard when no hash argument provided
+async fn show_torrent_selection(
+    bot: Bot,
+    msg: Message,
+    torrent: TorrentApi,
+    usage_msg: &str,
+) -> HandlerResult {
+    // Extract action and emoji from usage message
+    let (action, action_emoji) = parse_action_from_usage(usage_msg);
+
+    // Fetch torrents
+    let torrents = match torrent.query().await {
+        Ok(t) => t,
+        Err(err) => {
+            bot.send_message(msg.chat.id, format!("{} Error fetching torrents: {}", emoji::ERROR, err))
+                .await?;
+            return Ok(());
+        }
+    };
+
+    if torrents.is_empty() {
+        bot.send_message(msg.chat.id, "No torrents in queue.").await?;
+        return Ok(());
+    }
+
+    let keyboard = crate::keyboards::torrent_select_keyboard(&torrents, action, action_emoji);
+    bot.send_message(msg.chat.id, format!("Select a torrent to {}:", action))
+        .reply_markup(keyboard)
+        .await?;
+
+    Ok(())
+}
+
+/// Parse action name and emoji from usage message
+fn parse_action_from_usage(usage_msg: &str) -> (&str, &str) {
+    // Map usage messages to actions and emojis
+    if usage_msg.contains("/resume") {
+        ("resume", "▶️")
+    } else if usage_msg.contains("/pause") {
+        ("pause", "⏸️")
+    } else if usage_msg.contains("/deletedata") {
+        ("deletedata", "🗑️💥")
+    } else if usage_msg.contains("/delete") {
+        ("delete", "🗑️")
+    } else if usage_msg.contains("/recheck") {
+        ("recheck", "🔄")
+    } else if usage_msg.contains("/reannounce") {
+        ("reannounce", "📢")
+    } else if usage_msg.contains("/topprio") {
+        ("topprio", "⬆️")
+    } else if usage_msg.contains("/bottomprio") {
+        ("bottomprio", "⬇️")
+    } else if usage_msg.contains("/info") {
+        ("info", "🔍")
+    } else {
+        ("action", "⚡")
+    }
 }
 
 /// Send a formatted message with emoji prefix

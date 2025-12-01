@@ -118,6 +118,39 @@ pub fn pagination_keyboard(current_page: usize, total_pages: usize) -> InlineKey
     InlineKeyboardMarkup::new(buttons)
 }
 
+/// Create a torrent selection keyboard for a specific action
+///
+/// Shows up to 10 torrents with buttons to perform the specified action
+pub fn torrent_select_keyboard(
+    torrents: &[qbit_rs::model::Torrent],
+    action: &str,
+    action_emoji: &str,
+) -> InlineKeyboardMarkup {
+    let mut buttons: Vec<Vec<InlineKeyboardButton>> = torrents
+        .iter()
+        .take(10)
+        .filter_map(|t| {
+            let hash = t.hash.as_ref()?;
+            let name = t.name.as_deref().unwrap_or("Unknown");
+            // Truncate name to fit button
+            let display_name = if name.len() > 25 {
+                format!("{}...", &name[..22])
+            } else {
+                name.to_string()
+            };
+            Some(vec![InlineKeyboardButton::callback(
+                format!("{} {}", action_emoji, display_name),
+                format!("{}:{}", action, hash),
+            )])
+        })
+        .collect();
+
+    // Add cancel button
+    buttons.push(vec![InlineKeyboardButton::callback("❌ Cancel", "cancel".to_string())]);
+
+    InlineKeyboardMarkup::new(buttons)
+}
+
 /// Create a speed limit configuration keyboard
 pub fn speed_limit_keyboard() -> InlineKeyboardMarkup {
     let buttons = vec![

@@ -3,7 +3,7 @@
 //! This module handles all callback queries from inline keyboards,
 //! providing interactive responses to button presses.
 
-use crate::constants::{emoji, MAX_CALLBACK_DATA_LEN, TORRENTS_PER_PAGE};
+use crate::constants::{emoji, MAX_CALLBACK_DATA_LEN, MIN_STREAM_FILE_SIZE, TORRENTS_PER_PAGE};
 use crate::handlers;
 use crate::keyboards;
 use crate::rate_limit;
@@ -17,6 +17,7 @@ pub async fn handle_callback(
     bot: Bot,
     q: CallbackQuery,
     torrent: TorrentApi,
+    file_server: fileserver::FileServerApi,
 ) -> HandlerResult {
     // Answer callback query to remove loading state
     bot.answer_callback_query(&q.id).await?;
@@ -104,6 +105,15 @@ pub async fn handle_callback(
         }
         ["info", hash] => {
             handle_info_callback(bot, message, torrent, hash).await?;
+        }
+        ["files", hash] => {
+            handle_files_callback(bot, message, torrent, hash).await?;
+        }
+        ["stream", hash] => {
+            handle_stream_callback(bot, message, torrent, file_server, hash).await?;
+        }
+        ["sequential", hash] => {
+            handle_sequential_callback(bot, message, torrent, hash).await?;
         }
 
         // Destructive actions - show confirmation
@@ -421,6 +431,161 @@ async fn handle_version_callback(
         Ok(ver) => {
             bot.send_message(message.chat.id, format!("{} qBittorrent version: {}", emoji::TOOL, ver))
                 .await?;
+        }
+        Err(e) => {
+            bot.send_message(message.chat.id, format!("{} Error: {}", emoji::ERROR, e))
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+/// Handle files callback
+async fn handle_files_callback(
+    bot: Bot,
+    message: Message,
+    torrent: TorrentApi,
+    hash: &str,
+) -> HandlerResult {
+    let files = match torrent.get_torrent_files(hash).await {
+        Ok(f) => f,
+        Err(e) => {
+            bot.send_message(message.chat.id, format!("{} Error: {}", emoji::ERROR, e))
+                .await?;
+            return Ok(());
+        }
+    };
+
+    if files.is_empty() {
+        bot.send_message(message.chat.id, "No files found in this torrent.")
+            .await?;
+        return Ok(());
+    }
+
+    let mut response = format!("{} Files in Torrent:\n\n", emoji::FOLDER);
+    for (index, file) in files.iter().enumerate() {
+        response.push_str(&format!(
+            "{}. {}\n   Size: {} | Progress: {:.1}%\n\n",
+            index + 1,
+            file.name,
+            utils::format_size(file.size),
+            file.progress * 100.0
+        ));
+    }
+
+    bot.send_message(message.chat.id, response).await?;
+    Ok(())
+}
+
+/// Handle stream callback
+async fn handle_stream_callback(
+    bot: Bot,
+    message: Message,
+    torrent: TorrentApi,
+    file_server: fileserver::FileServerApi,
+    hash: &str,
+) -> HandlerResult {
+    // Get torrent files
+    let files = match torrent.get_torrent_files(hash).await {
+        Ok(f) => f,
+        Err(e) => {
+            bot.send_message(message.chat.id, format!("{} Error: {}", emoji::ERROR, e))
+                .await?;
+            return Ok(());
+        }
+    };
+
+    if files.is_empty() {
+        bot.send_message(message.chat.id, "No files found in this torrent.")
+            .await?;
+        return Ok(());
+    }
+
+    // Get torrent info for save path
+    let torrent_info = match torrent.get_torrent_info(hash).await {
+        Ok(info) => info,
+        Err(e) => {
+            bot.send_message(message.chat.id, format!("{} Error: {}", emoji::ERROR, e))
+                .await?;
+            return Ok(());
+        }
+    };
+
+    let save_path = torrent_info.save_path;
+    let mut response = String::from("*🎬 Streaming Links*\n\n");
+
+    for (index, file) in files.iter().enumerate() {
+        let filename = &file.name;
+
+        // Skip small files
+        if file.size < MIN_STREAM_FILE_SIZE {
+            continue;
+        }
+
+        // Generate streaming token
+        let token = fileserver::generate_stream_token(hash, index, file_server.state().secret());
+
+        // Construct file path
+        let save_path_str = save_path.as_deref().unwrap_or(".");
+        let file_path = std::path::PathBuf::from(save_path_str).join(filename);
+
+        // Register stream
+        let stream_info = fileserver::StreamInfo {
+            torrent_hash: hash.to_string(),
+            file_index: index,
+            file_path,
+            filename: filename.clone(),
+            created_at: chrono::Utc::now(),
+        };
+        file_server.state().register_stream(token.clone(), stream_info);
+
+        // Generate URL
+        let stream_url = format!(
+            "{}/stream/{}/{}",
+            file_server.base_url(),
+            token,
+            urlencoding::encode(filename)
+        );
+
+        let escaped_filename = utils::escape_markdown_v2(filename);
+        let escaped_size = utils::escape_markdown_v2(&utils::format_size(file.size));
+
+        response.push_str(&format!(
+            "📄 *{}*\n   Size: {}\n   🔗 [Stream]({})\n   📋 `{}`\n\n",
+            escaped_filename, escaped_size, stream_url, stream_url
+        ));
+    }
+
+    response.push_str("💡 *Tip:* Click link to stream or copy URL for VLC/MX Player\\!");
+
+    bot.send_message(message.chat.id, response)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .disable_web_page_preview(true)
+        .await?;
+    Ok(())
+}
+
+/// Handle sequential callback
+async fn handle_sequential_callback(
+    bot: Bot,
+    message: Message,
+    torrent: TorrentApi,
+    hash: &str,
+) -> HandlerResult {
+    match torrent.toggle_sequential_download(hash).await {
+        Ok(_) => {
+            // Also toggle first/last piece priority
+            let _ = torrent.toggle_first_last_piece_priority(hash).await;
+
+            bot.send_message(
+                message.chat.id,
+                format!(
+                    "{} Sequential download mode toggled!\n\n\
+                    ℹ️ Sequential mode downloads pieces in order for streaming.",
+                    emoji::SUCCESS
+                ),
+            )
+            .await?;
         }
         Err(e) => {
             bot.send_message(message.chat.id, format!("{} Error: {}", emoji::ERROR, e))

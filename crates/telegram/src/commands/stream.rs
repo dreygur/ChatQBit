@@ -17,12 +17,17 @@ pub async fn stream(
 
     let hash = match utils::extract_hash_arg(&args) {
         Ok(h) => h,
-        Err(e) => {
-            bot.send_message(
-                msg.chat.id,
-                format!("{} {}\n\nUsage: /stream <torrent_hash>", emoji::ERROR, e),
-            )
-            .await?;
+        Err(_) => {
+            // No hash - show torrent selection
+            let torrents = torrent.query().await.unwrap_or_default();
+            if torrents.is_empty() {
+                bot.send_message(msg.chat.id, "No torrents in queue.").await?;
+                return Ok(());
+            }
+            let keyboard = crate::keyboards::torrent_select_keyboard(&torrents, "stream", "🎬");
+            bot.send_message(msg.chat.id, "Select a torrent to stream:")
+                .reply_markup(keyboard)
+                .await?;
             return Ok(());
         }
     };
@@ -114,12 +119,17 @@ pub async fn sequential(bot: Bot, msg: Message, torrent: TorrentApi) -> HandlerR
 
     let hash = match utils::extract_hash_arg(&args) {
         Ok(h) => h,
-        Err(e) => {
-            bot.send_message(
-                msg.chat.id,
-                format!("{} {}\n\nUsage: /sequential <torrent_hash>", emoji::ERROR, e),
-            )
-            .await?;
+        Err(_) => {
+            // No hash - show torrent selection
+            let torrents = torrent.query().await.unwrap_or_default();
+            if torrents.is_empty() {
+                bot.send_message(msg.chat.id, "No torrents in queue.").await?;
+                return Ok(());
+            }
+            let keyboard = crate::keyboards::torrent_select_keyboard(&torrents, "sequential", "📶");
+            bot.send_message(msg.chat.id, "Select a torrent to toggle sequential mode:")
+                .reply_markup(keyboard)
+                .await?;
             return Ok(());
         }
     };
