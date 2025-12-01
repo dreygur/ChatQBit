@@ -174,11 +174,19 @@ async fn stream_file(
     let stream = ReaderStream::new(file);
     let body = Body::from_stream(stream);
 
+    // Use inline disposition for video/audio to stream in browser
+    let disposition = if mime_type.starts_with("video/") || mime_type.starts_with("audio/") {
+        "inline".to_string()
+    } else {
+        format!("attachment; filename=\"{}\"", stream_info.filename)
+    };
+
     let response = Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, mime_type)
+        .header(header::CONTENT_TYPE, &mime_type)
         .header(header::CONTENT_LENGTH, file_size)
         .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_DISPOSITION, disposition)
         .body(body)
         .map_err(|e| AppError::Internal(format!("Failed to build response: {}", e)))?;
 
@@ -236,6 +244,13 @@ async fn handle_range_request(
         .await
         .map_err(|e| AppError::Internal(format!("Failed to read file: {}", e)))?;
 
+    // Use inline disposition for video/audio to stream in browser
+    let disposition = if mime_type.starts_with("video/") || mime_type.starts_with("audio/") {
+        "inline"
+    } else {
+        "attachment"
+    };
+
     let response = Response::builder()
         .status(StatusCode::PARTIAL_CONTENT)
         .header(header::CONTENT_TYPE, mime_type)
@@ -245,6 +260,7 @@ async fn handle_range_request(
             format!("bytes {}-{}/{}", start, end, file_size),
         )
         .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_DISPOSITION, disposition)
         .body(Body::from(buffer))
         .map_err(|e| AppError::Internal(format!("Failed to build response: {}", e)))?;
 
